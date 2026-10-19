@@ -63,6 +63,7 @@
   <!-- Returning device -->
   <section id="signin" class="hidden">
     <button id="signinBtn">Continue with passkey</button>
+    <button id="pwBtn" class="quiet">Use password instead</button>
     <button id="addBtn" class="quiet">Use a new device</button>
   </section>
 
@@ -112,7 +113,9 @@
   }
 
   async function post(path, body) {
-    const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+    // Never hang silently: a request that doesn't come back in 15 s is reported.
+    const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout?.(15000) });
     if (!r.ok) throw new Error((await r.text()).trim() || r.statusText);
     return r.status === 204 ? null : r.json();
   }
@@ -123,21 +126,28 @@
   }
   const fail = (e) => {
     $('#err').textContent =
-      e.name === 'NotAllowedError' ? 'Cancelled.'
-      : e instanceof TypeError ? 'Can’t reach your Mac. Check that Tailscale is connected on this device, then try again.'
+      e.name === 'NotAllowedError' ? 'Passkey cancelled or not available. Try again, or use your password.'
+      : e instanceof TypeError || e.name === 'TimeoutError' || e.name === 'AbortError' ? 'Can’t reach your Mac. Check that Tailscale is connected on this device, then try again.'
       : e.message;
   };
 
+  let busy = false;
   async function signIn() {
+    if (busy) return;
+    busy = true;
+    $('#signinBtn').textContent = 'Waiting for passkey…';
+    $('#err').textContent = '';
     try {
       const { id, options } = await post('auth/login/begin');
       const cred = await navigator.credentials.get({ publicKey: requestOptions(options.publicKey) });
       await post('auth/login/finish?id=' + id, credJSON(cred));
       location.replace(safeNext);
     } catch (e) { fail(e); }
+    finally { busy = false; $('#signinBtn').textContent = 'Continue with passkey'; }
   }
 
   $('#signinBtn').onclick = signIn;
+  $('#pwBtn').onclick = () => { show('password'); $('#pw').focus(); };
   $('#addBtn').onclick = () => { show('pair'); $('#backBtn').classList.remove('hidden'); };
   $('#backBtn').onclick = () => show('signin');
 
@@ -166,7 +176,7 @@
     try {
       await post('auth/password', { password: $('#pw').value });
       $('#pw').value = '';
-      route();
+      location.replace(safeNext);   // the password signs you in; a passkey is optional
     } catch (err) { fail(err); }
   };
 

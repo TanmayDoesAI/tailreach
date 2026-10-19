@@ -195,6 +195,9 @@ func (a *app) passwordLogin(w http.ResponseWriter, r *http.Request) {
 	a.sec.addTrust(w, a.viewerNode(r), who)
 	a.audit("password-ok", who, "trusted for 30 days")
 	notify("Device trusted for 30 days", who)
+	// The device password (on top of your Tailscale identity) is enough to sign in;
+	// a passkey is an optional shortcut, never a lock-out.
+	a.auth2.startSession(w, who)
 	w.WriteHeader(http.StatusNoContent)
 }
 

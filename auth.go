@@ -287,6 +287,7 @@ func (a *app) registerFinish(w http.ResponseWriter, r *http.Request) {
 	delete(s.pending, key)
 	s.mu.Unlock()
 	if sd == nil {
+		log.Printf("passkey sign-in from %s: challenge expired or unknown", a.viewerName(r))
 		http.Error(w, "expired, try again", http.StatusBadRequest)
 		return
 	}
@@ -345,6 +346,7 @@ func (a *app) loginFinish(w http.ResponseWriter, r *http.Request) {
 	delete(s.pending, key)
 	s.mu.Unlock()
 	if sd == nil {
+		log.Printf("passkey sign-in from %s: challenge expired or unknown", a.viewerName(r))
 		http.Error(w, "expired, try again", http.StatusBadRequest)
 		return
 	}
@@ -353,6 +355,7 @@ func (a *app) loginFinish(w http.ResponseWriter, r *http.Request) {
 	cred, err := s.wa.FinishLogin(s.user, *sd, r)
 	if err != nil {
 		a.audit("login-failed", who, err.Error())
+		log.Printf("passkey sign-in from %s failed: %v", who, err)
 		http.Error(w, "passkey check failed", http.StatusForbidden)
 		return
 	}
