@@ -202,6 +202,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
             cfg.colorMatrix = CGDisplayStream.yCbCrMatrix_ITU_R_709_2
             cfg.queueDepth = 5
             cfg.showsCursor = cursor // false when the viewer draws the cursor itself (feels instant)
+            cfg.capturesAudio = false // video only: no sound is captured or sent
 
             if let old = stream { try? await old.stopCapture() }
             q.sync {
