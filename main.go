@@ -96,6 +96,7 @@ func main() {
 }
 
 func run(o options) error {
+	retireHelperOnExit()
 	hostname := o.name
 	stateName := o.name
 	if o.hub {

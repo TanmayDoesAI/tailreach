@@ -689,7 +689,13 @@ Thread {
               let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { continue }
         handle(obj)
     }
-    exit(0) // stdin closed: session over
+    // stdin closed: session over (or mydevices quit). End the capture session properly
+    // before exiting, so macOS clears its screen-recording indicator.
+    let done = DispatchSemaphore(value: 0)
+    Task { await capture.stop(); done.signal() }
+    _ = done.wait(timeout: .now() + 1.5)
+    log("exited cleanly")
+    exit(0)
 }.start()
 
 app.run()

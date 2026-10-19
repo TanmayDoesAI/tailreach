@@ -8,8 +8,11 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strconv"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -27,6 +30,7 @@ type captureHelper struct {
 	stdin io.WriteCloser
 	inMu  sync.Mutex
 	dead  chan struct{}
+	ended atomic.Bool // kill was called: on its way out, don't hand it to a new viewer
 
 	mu    sync.Mutex
 	sink  func(typ byte, msg []byte) // the attached viewer, or nil
@@ -44,7 +48,7 @@ var helperState struct {
 func warmHelper() (*captureHelper, error) {
 	helperState.Lock()
 	defer helperState.Unlock()
-	if h := helperState.h; h != nil {
+	if h := helperState.h; h != nil && !h.ended.Load() {
 		select {
 		case <-h.dead:
 		default:
@@ -54,6 +58,7 @@ func warmHelper() (*captureHelper, error) {
 	cmd := exec.Command(helperPath())
 	// The helper refuses to capture unless it was started by us (see capture/main.swift).
 	cmd.Env = append(os.Environ(), "MYDEVICES_PARENT="+strconv.Itoa(os.Getpid()))
+	ownGroup(cmd)
 	stdin, _ := cmd.StdinPipe()
 	stdout, _ := cmd.StdoutPipe()
 	cmd.Stderr = os.Stderr
@@ -120,9 +125,43 @@ func (h *captureHelper) scheduleIdle() {
 	h.killT = time.AfterFunc(helperLinger, whenIdle(h.kill))
 }
 
+// kill ends the helper. Closing its stdin lets it end its capture session properly and
+// exit, which is what makes macOS take down its "recording" indicator; a helper killed
+// outright can leave that indicator stuck. Force-killed only if it hasn't gone in 2 s.
 func (h *captureHelper) kill() {
+	if h.ended.Swap(true) {
+		return
+	}
 	h.stdin.Close()
-	h.cmd.Process.Kill()
+	go func() {
+		select {
+		case <-h.dead:
+		case <-time.After(2 * time.Second):
+			h.cmd.Process.Kill()
+		}
+	}()
+}
+
+// retireHelperOnExit: when mydevices is told to quit (logout, restart, Ctrl-C), it lets
+// the helper end its capture session cleanly first. Otherwise launchd kills it outright
+// along with us, which can leave macOS's recording indicator stuck.
+func retireHelperOnExit() {
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGTERM, syscall.SIGINT)
+	go func() {
+		<-ch
+		helperState.Lock()
+		h := helperState.h
+		helperState.Unlock()
+		if h != nil {
+			h.kill()
+			select {
+			case <-h.dead:
+			case <-time.After(2 * time.Second):
+			}
+		}
+		os.Exit(0)
+	}()
 }
 
 // read parses [u32 len][u8 type][payload] frames and hands each one to the sink.
