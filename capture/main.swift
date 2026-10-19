@@ -423,6 +423,9 @@ func handle(_ c: [String: Any]) {
         if let br = c["br"] as? NSNumber { capture.enc.bitrate = br.intValue }
         let localCursor = c["localCursor"] as? Bool ?? false
         let viewer = c["viewer"] as? String ?? "a device"
+        if !AXIsProcessTrusted() {
+            event(["t": "warn", "msg": "Accessibility permission is needed for mouse and keyboard control"])
+        }
         Task {
             await MainActor.run { panel.show(viewer: viewer) } // shown before capture starts, so it can be left out of it
             await capture.start(maxW: max(320, w), maxH: max(240, h), fps: (10...120).contains(fps) ? fps : 60, cursor: !localCursor)
