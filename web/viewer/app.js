@@ -921,6 +921,7 @@ const actions = {
   more: () => openSheet($('#more').classList.contains('hidden')),
   close: () => openSheet(false),
   mode: () => setMode(settings.mode === 'trackpad' ? 'touch' : 'trackpad'),
+  showBar: () => document.body.classList.remove('bar-hidden'),
   typeText: () => send({ t: 'text', s: $('#clipText').value }),
   sendClip: () => { send({ t: 'clip-set', s: $('#clipText').value }); flash('Put on the Mac clipboard'); },
   pasteToMac: async () => {

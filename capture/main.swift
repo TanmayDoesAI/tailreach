@@ -434,6 +434,7 @@ func handle(_ c: [String: Any]) {
         }
     case "kf": capture.requestKeyframe()
     case "resend": capture.resendConfig()
+    case "diag": event(["t": "diag", "accessibility": AXIsProcessTrusted(), "screen": CGPreflightScreenCaptureAccess()])
     case "br": capture.setBitrate(Int(num(c["bps"])))
     case "abs": inputQ.async { input.moveAbs(num(c["x"]), num(c["y"]), mods: mods) }
     case "rel": inputQ.async { input.moveRel(num(c["dx"]), num(c["dy"]), mods: mods) }

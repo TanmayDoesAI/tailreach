@@ -33,7 +33,7 @@ const (
 // Commands a browser may send through to the capture helper.
 var allowedCmds = map[string]bool{
 	"start": true, "kf": true, "abs": true, "rel": true, "btn": true, "click": true,
-	"scroll": true, "key": true, "text": true, "media": true, "clip-set": true, "clip-get": true,
+	"scroll": true, "key": true, "text": true, "media": true, "clip-set": true, "clip-get": true, "diag": true,
 }
 
 func helperPath() string {

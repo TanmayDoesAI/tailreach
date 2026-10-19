@@ -251,3 +251,11 @@ textarea, input:not([type]), input[type="password"] {
 
 /* Hidden input that brings up the on-screen keyboard; must stay focusable */
 #kbd { position: fixed; top: 0; left: 0; width: 1px; height: 1px; opacity: 0; border: 0; padding: 0; pointer-events: none; }
+
+/* Handle shown while the toolbar is hidden */
+#handle {
+  display: none; position: fixed; z-index: 10; left: 50%; transform: translateX(-50%);
+  bottom: calc(6px + var(--safe-b)); width: 120px; height: 28px;
+}
+#handle::after { content: ""; width: 44px; height: 5px; border-radius: 3px; background: rgba(255,255,255,.45); box-shadow: 0 0 6px rgba(0,0,0,.6); }
+body.bar-hidden[data-state="on"]:not(.locked) #handle { display: flex; align-items: center; justify-content: center; }

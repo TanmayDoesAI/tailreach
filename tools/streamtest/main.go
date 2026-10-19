@@ -49,6 +49,7 @@ func main() {
 	send := func(v any) { b, _ := json.Marshal(v); c.Write(ctx, websocket.MessageText, b) }
 	send(map[string]any{"t": "start", "w": 2556, "h": 2556, "fps": 60, "maxbr": 20000000, "localCursor": true})
 
+	send(map[string]any{"t": "diag"})
 	if *nudge {
 		go func() {
 			time.Sleep(time.Second)
@@ -101,7 +102,7 @@ func main() {
 				if *nudge {
 					fmt.Printf("cursor x=%.4f\n", ev["x"])
 				}
-			case "stats", "started", "rtc-failed", "error", "warn":
+			case "stats", "started", "rtc-failed", "error", "warn", "diag":
 				fmt.Println("event:", string(b))
 			}
 			continue
