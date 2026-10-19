@@ -567,9 +567,9 @@ let panel = SharePanel {
 // Warm up ScreenCaptureKit while idle, so the first frame comes quickly. (No capture yet.)
 Task { _ = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) }
 
-// Ask for permissions up front so macOS lists this helper in System Settings.
-if !CGPreflightScreenCaptureAccess() { CGRequestScreenCaptureAccess() }
-if !AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary) {
+// No permission prompts from here: macOS attributes them to mydevices and asks on its
+// own when something is actually missing. Just report it so the viewer can say so.
+if !AXIsProcessTrusted() {
     event(["t": "warn", "msg": "Accessibility permission is needed for mouse and keyboard control"])
 }
 

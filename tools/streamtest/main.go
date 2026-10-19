@@ -28,6 +28,7 @@ import (
 func main() {
 	useRTC := flag.Bool("rtc", false, "receive video over WebRTC")
 	secs := flag.Int("t", 6, "seconds to run")
+	nudge := flag.Bool("nudge", false, "move the Mac's cursor 40 points right and back, to check input works")
 	flag.Parse()
 	page, _ := url.Parse(flag.Arg(0))
 	u := *page
@@ -48,6 +49,14 @@ func main() {
 	send := func(v any) { b, _ := json.Marshal(v); c.Write(ctx, websocket.MessageText, b) }
 	send(map[string]any{"t": "start", "w": 2556, "h": 2556, "fps": 60, "maxbr": 20000000, "localCursor": true})
 
+	if *nudge {
+		go func() {
+			time.Sleep(time.Second)
+			send(map[string]any{"t": "rel", "dx": 40, "dy": 0})
+			time.Sleep(500 * time.Millisecond)
+			send(map[string]any{"t": "rel", "dx": -40, "dy": 0})
+		}()
+	}
 	start := time.Now()
 	var wsFrames, wsBytes, rtcPkts, rtcBytes int
 	var firstWS, firstRTC time.Duration
@@ -88,7 +97,11 @@ func main() {
 			switch ev["t"] {
 			case "rtc-answer":
 				pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeAnswer, SDP: ev["sdp"].(string)})
-			case "stats", "started", "rtc-failed", "error":
+			case "cursor":
+				if *nudge {
+					fmt.Printf("cursor x=%.4f\n", ev["x"])
+				}
+			case "stats", "started", "rtc-failed", "error", "warn":
 				fmt.Println("event:", string(b))
 			}
 			continue
