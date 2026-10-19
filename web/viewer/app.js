@@ -1,6 +1,7 @@
 // Mac Remote — fast viewer.
-// Hardware H.264 from the Mac → WebSocket → WebCodecs VideoDecoder → <canvas>.
-// Touch, mouse and keyboard go back as small JSON messages.
+// Hardware H.264 from the Mac → WebRTC <video> (or WebSocket → WebCodecs → <canvas>).
+// Touch, mouse and keyboard go back as small JSON messages, on WebRTC data channels
+// when they're open and the WebSocket otherwise.
 'use strict';
 
 // ---------- settings you might want to tweak ----------
@@ -26,6 +27,7 @@ const settings = {
   speed: store.get('speed', 1.4),
   natural: store.get('natural', true),
   mode: store.get('mode', 'trackpad'),   // 'trackpad' | 'touch'
+  display: store.get('display', 0),      // the Mac's display to show; 0 = its main one
 };
 
 const canvas = $('#screen');
@@ -93,9 +95,7 @@ function connect() {
 
   ws.onopen = () => {
     retry = 0;
-    const p = PRESETS[settings.quality] || PRESETS.auto;
-    const side = Math.min(p.maxSide, Math.round(Math.max(screen.width, screen.height) * devicePixelRatio));
-    send({ t: 'start', w: side, h: side, fps: +settings.fps, maxbr: p.maxbr, localCursor: true });
+    sendStart();
     keepAwake();
     startRTC();   // video starts on the WebSocket and moves to WebRTC once it connects
   };
@@ -120,6 +120,12 @@ function connect() {
   };
 }
 
+function sendStart() {
+  const p = PRESETS[settings.quality] || PRESETS.auto;
+  const side = Math.min(p.maxSide, Math.round(Math.max(screen.width, screen.height) * devicePixelRatio));
+  send({ t: 'start', w: side, h: side, fps: +settings.fps, maxbr: p.maxbr, localCursor: true, display: settings.display });
+}
+
 function stoppedOnMac() {
   stopped = true;
   hasFrame = false;
@@ -136,7 +142,15 @@ function stoppedOnMac() {
   };
 }
 
+// Input goes over WebRTC once it's up: UDP, so one lost packet never holds up the rest.
+// Pointer positions take the channel that never resends (the next one supersedes it);
+// everything that must arrive, in order, takes the reliable one. Big or control
+// messages (start, clipboard, WebRTC setup) stay on the WebSocket.
+const OVER_RTC = new Set(['rel', 'btn', 'click', 'scroll', 'key', 'text', 'media', 'ping']);
 function send(obj) {
+  const dc = obj.t === 'abs' ? moveDC : OVER_RTC.has(obj.t) ? inputDC : null;
+  // While WebRTC is reconnecting (pc 'disconnected'), the WebSocket may still get through.
+  if (dc?.readyState === 'open' && pc?.connectionState === 'connected') { dc.send(JSON.stringify(obj)); return; }
   if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj));
 }
 
@@ -231,6 +245,8 @@ let rtcTimer = 0;
 let rtcStall = 0;
 let rtcRetry = 0;
 let rtcRetries = 0;
+let inputDC = null;   // ordered, reliable
+let moveDC = null;    // unordered, never resent
 
 async function startRTC() {
   if (!window.RTCPeerConnection || store.get('transport', 'auto') === 'ws') return;
@@ -238,6 +254,9 @@ async function startRTC() {
   try {
     pc = new RTCPeerConnection({ iceServers: [] });   // tailnet only: no STUN/TURN
     const tr = pc.addTransceiver('video', { direction: 'recvonly' });
+    inputDC = pc.createDataChannel('input');
+    moveDC = pc.createDataChannel('move', { ordered: false, maxRetransmits: 0 });
+    for (const dc of [inputDC, moveDC]) dc.onmessage = (e) => onEvent(JSON.parse(e.data));   // pongs, cursor reports
     try {
       const codecs = RTCRtpReceiver.getCapabilities('video').codecs.filter((c) => /h264/i.test(c.mimeType));
       if (codecs.length) tr.setCodecPreferences(codecs);
@@ -287,6 +306,7 @@ function fallbackToWS() {
 function stopRTC(tellServer) {
   clearTimeout(rtcTimer);
   clearTimeout(rtcStall);
+  inputDC = moveDC = null;
   if (pc) {
     pc.close();
     pc = null;
@@ -333,7 +353,13 @@ function onVideoFrame(now, meta, polled) {
 
 function onEvent(ev) {
   switch (ev.t) {
-    case 'started': screenPts.w = ev.ptW; screenPts.h = ev.ptH; drawCursor(); break;
+    case 'started':
+      screenPts.w = ev.ptW; screenPts.h = ev.ptH;
+      shownDisplay = ev.display;
+      markDisplays();
+      drawCursor();
+      break;
+    case 'displays': displays = ev.list; markDisplays(); break;
     case 'cursor':
       // The Mac's position is the truth, but while you're moving it we trust our prediction.
       macCursor = ev;
@@ -452,6 +478,39 @@ $('#unlock').addEventListener('submit', async (e) => {
   }
 });
 
+// ---------- displays ----------
+// A Mac with more than one display gets a picker in the panel. Switching is live: the
+// stream restarts on the other display and picks up there without reconnecting.
+let displays = [];
+let shownDisplay = 0;
+
+function displayLabel(d) {
+  if (d.builtin) return 'Built-in';
+  return d.name.length > 14 ? d.name.slice(0, 13) + '…' : d.name;
+}
+
+function markDisplays() {
+  const seg = $('#displaySeg');
+  $('#displayRow').classList.toggle('hidden', displays.length < 2);
+  seg.replaceChildren(...displays.map((d) => {
+    const b = document.createElement('button');
+    b.textContent = displayLabel(d);
+    b.title = `${d.name} · ${d.w}×${d.h}`;
+    b.dataset.display = d.id;
+    b.classList.toggle('on', d.id === shownDisplay);
+    return b;
+  }));
+}
+
+function chooseDisplay(id) {
+  settings.display = id;
+  store.set('display', id);
+  shownDisplay = id;
+  markDisplays();
+  view.z = 1;
+  sendStart();   // the Mac switches capture, input and cursor over to that display
+}
+
 // ---------- view: fit, zoom and pan ----------
 const view = { z: 1, x: 0, y: 0 };   // zoom factor and top-left offset in CSS px
 const cursor = { x: 0.5, y: 0.5 };   // remote cursor, normalised 0..1
@@ -488,6 +547,8 @@ function setCursorImage(ev) {
 
 function drawCursor() {
   if (!canvas.width || !cursorShape.w) return;
+  // The Mac's pointer is on another display: nothing to draw here.
+  cursorEl.style.visibility = cursor.x < 0 || cursor.x > 1 || cursor.y < 0 || cursor.y > 1 ? 'hidden' : '';
   const s = baseScale() * view.z;
   const ptToPx = (canvas.width / screenPts.w) * s;   // Mac points → CSS px on this screen
   const x = view.x + cursor.x * canvas.width * s - cursorShape.hx * ptToPx;
@@ -582,12 +643,13 @@ function mods() {
 }
 
 // ---------- clicks ----------
+// A click aimed at a spot (touch mode) carries that spot, so it can't land anywhere else.
 let lastClick = { at: 0, n: 0 };
-function click(button = 0) {
+function click(button = 0, at) {
   const now = performance.now();
   const n = button === 0 && now - lastClick.at < 400 ? Math.min(3, lastClick.n + 1) : 1;
   lastClick = { at: now, n };
-  send({ t: 'click', b: button, n, m: mods() });
+  send({ t: 'click', b: button, n, m: mods(), ...at });
 }
 
 // ---------- touch gestures ----------
@@ -641,7 +703,7 @@ surface.addEventListener('touchstart', (e) => {
     Object.assign(g, {
       active: true, start: now, maxN: t.n, moved: false, mode: null,
       sx: t.x, sy: t.y, lx: t.x, ly: t.y, lt: now,
-      tapDrag: settings.mode === 'trackpad' && now - (g.lastTapEnd || 0) < 280,
+      tapDrag: settings.mode === 'trackpad' && now - (g.lastTapEnd || 0) < 280, lastP: null,
     });
     clearTimeout(g.longTimer);
     g.longTimer = setTimeout(onLongPress, LONG_PRESS_MS);
@@ -660,9 +722,7 @@ function onLongPress() {
     g.mode = 'drag';
     send({ t: 'btn', b: 0, down: true, n: 1, m: mods() });
   } else {
-    const p = toRemote(g.sx, g.sy);
-    send({ t: 'abs', x: p.x, y: p.y });
-    click(1);
+    click(1, toRemote(g.sx, g.sy));
     g.mode = 'done';
   }
   navigator.vibrate?.(10);
@@ -688,13 +748,12 @@ surface.addEventListener('touchmove', (e) => {
     } else if (g.moved && g.mode !== 'done') {
       const p = toRemote(t.x, t.y);
       if (!g.mode) {
-        const p0 = toRemote(g.sx, g.sy);
-        send({ t: 'abs', x: p0.x, y: p0.y });
-        send({ t: 'btn', b: 0, down: true, n: 1, m: mods() });
+        send({ t: 'btn', b: 0, down: true, n: 1, m: mods(), ...toRemote(g.sx, g.sy) });
         g.mode = 'drag';
       }
       send({ t: 'abs', x: p.x, y: p.y });
       predictAbs(p);
+      g.lastP = p;
     }
   } else if (t.n === 2) {
     if (!g.mode) {
@@ -738,14 +797,13 @@ function endTouch(e) {
       startMomentum(sx / span, sy / span);
     }
   } else if (g.mode === 'drag') {
-    send({ t: 'btn', b: 0, down: false, n: 1 });
+    send({ t: 'btn', b: 0, down: false, n: 1, ...(settings.mode === 'touch' && g.lastP) });
   } else if (g.maxN === 1 && !g.moved && !g.mode && dur < LONG_PRESS_MS) {
     if (settings.mode === 'touch') {
       const p = toRemote(g.sx, g.sy);
-      send({ t: 'abs', x: p.x, y: p.y });
       predictAbs(p);
-    }
-    click(0);
+      click(0, p);
+    } else click(0);
     g.lastTapEnd = performance.now();
   } else if (g.maxN === 2 && !g.mode && dur < TAP_MS * 1.6) {
     click(1);
@@ -763,7 +821,7 @@ surface.addEventListener('touchcancel', (e) => {
   if (!g.active) return;
   clearTimeout(g.longTimer);
   if (g.mode === 'scroll') send({ t: 'scroll', dx: 0, dy: 0, ph: 'cancel' });
-  else if (g.mode === 'drag') send({ t: 'btn', b: 0, down: false, n: 1 });
+  else if (g.mode === 'drag') send({ t: 'btn', b: 0, down: false, n: 1, ...(settings.mode === 'touch' && g.lastP) });
   g.active = false;
 }, { passive: false });
 document.addEventListener('gesturestart', (e) => e.preventDefault());
@@ -778,11 +836,11 @@ surface.addEventListener('pointermove', (e) => {
 surface.addEventListener('pointerdown', (e) => {
   if (e.pointerType !== 'mouse') return;
   surface.setPointerCapture(e.pointerId);
-  send({ t: 'btn', b: e.button === 2 ? 1 : e.button === 1 ? 2 : 0, down: true, n: Math.max(1, e.detail), m: physicalMods(e) });
+  send({ t: 'btn', b: e.button === 2 ? 1 : e.button === 1 ? 2 : 0, down: true, n: Math.max(1, e.detail), m: physicalMods(e), ...toRemote(e.clientX, e.clientY) });
 });
 surface.addEventListener('pointerup', (e) => {
   if (e.pointerType !== 'mouse') return;
-  send({ t: 'btn', b: e.button === 2 ? 1 : e.button === 1 ? 2 : 0, down: false, n: Math.max(1, e.detail), m: physicalMods(e) });
+  send({ t: 'btn', b: e.button === 2 ? 1 : e.button === 1 ? 2 : 0, down: false, n: Math.max(1, e.detail), m: physicalMods(e), ...toRemote(e.clientX, e.clientY) });
 });
 surface.addEventListener('contextmenu', (e) => e.preventDefault());
 surface.addEventListener('wheel', (e) => {
@@ -1058,6 +1116,10 @@ function markSegments() {
   document.querySelectorAll('[data-set]').forEach((b) =>
     b.classList.toggle('on', String(settings[b.dataset.set]) === b.dataset.value));
 }
+document.addEventListener('click', (e) => {
+  const d = e.target.closest('[data-display]');
+  if (d && +d.dataset.display !== shownDisplay) chooseDisplay(+d.dataset.display);
+});
 document.addEventListener('click', (e) => {
   const b = e.target.closest('[data-set]');
   if (!b) return;

@@ -24,9 +24,15 @@ import (
 // video. UDP (a lost packet is resent or skipped, never stalls everything behind it),
 // a jitter buffer on the phone, and Google Congestion Control steering the encoder.
 //
-// ICE only ever offers this node's Tailscale address, so media flows over the tailnet
-// and nowhere else. The WebSocket stays up for input and control, and for video too if
-// WebRTC can't connect.
+// Input rides the same connection, on two data channels the browser opens:
+//   "input": ordered and reliable (clicks, keys, scrolls, trackpad moves)
+//   "move":  unordered, never resent (pointer positions, and the Mac's cursor reports
+//            back): a lost one is simply replaced by the next, so nothing ever waits.
+// Over UDP, a lost packet holds up nothing else, unlike the WebSocket's TCP.
+//
+// ICE only ever offers this node's Tailscale address, so media and input flow over the
+// tailnet and nowhere else. The WebSocket stays up for control, and carries video and
+// input too if WebRTC can't connect.
 
 const rtcPort = "50050"
 
@@ -59,6 +65,7 @@ type rtcSession struct {
 	connected atomic.Bool
 	est       atomic.Value // cc.BandwidthEstimator
 	sentBytes atomic.Int64
+	move      atomic.Pointer[webrtc.DataChannel]
 
 	mu      sync.Mutex
 	sps     [][]byte
@@ -74,8 +81,10 @@ type rtcSession struct {
 // Keyframes are expensive; heavy loss can ask for one per packet. One per this long is plenty.
 const keyframeEvery = 300 * time.Millisecond
 
-// newRTC answers the browser's offer. onKeyframe is called when the browser asks for one.
-func (a *app) newRTC(offer string, maxBitrate int, onKeyframe, onConnected, onFailed func()) (*rtcSession, string, error) {
+// newRTC answers the browser's offer. onKeyframe is called when the browser asks for one;
+// onInput for each command arriving on a data channel, with a way to answer on it.
+func (a *app) newRTC(offer string, maxBitrate int, onKeyframe, onConnected, onFailed func(),
+	onInput func(msg []byte, reply func([]byte))) (*rtcSession, string, error) {
 	mux, err := a.iceMux()
 	if err != nil {
 		return nil, "", err
@@ -165,6 +174,21 @@ func (a *app) newRTC(offer string, maxBitrate int, onKeyframe, onConnected, onFa
 			}
 		}
 	}()
+	pc.OnDataChannel(func(dc *webrtc.DataChannel) {
+		label := dc.Label()
+		if label != "input" && label != "move" {
+			dc.Close()
+			return
+		}
+		if label == "move" {
+			dc.OnOpen(func() { s.move.Store(dc) })
+		}
+		dc.OnMessage(func(m webrtc.DataChannelMessage) {
+			if m.IsString {
+				onInput(m.Data, func(b []byte) { dc.SendText(string(b)) })
+			}
+		})
+	})
 	pc.OnConnectionStateChange(func(st webrtc.PeerConnectionState) {
 		switch st {
 		case webrtc.PeerConnectionStateConnected:
@@ -258,6 +282,19 @@ func (s *rtcSession) writeFrame(msg []byte) error {
 		}
 	}
 	return nil
+}
+
+// sendMove sends a message the newest copy of which is all that matters (a cursor report)
+// on the unreliable channel. False if that channel isn't open.
+func (s *rtcSession) sendMove(msg []byte) bool {
+	dc := s.move.Load()
+	if dc == nil || dc.ReadyState() != webrtc.DataChannelStateOpen {
+		return false
+	}
+	if dc.BufferedAmount() < 32<<10 { // backed up: skip this one, a newer report follows
+		dc.SendText(string(msg))
+	}
+	return true
 }
 
 func randUint32() uint32 {

@@ -1,5 +1,6 @@
 // streamtest connects to a device's /stream like the browser does and reports frame
-// rate, bitrate and keyframes, over the WebSocket or (with -rtc) over WebRTC.
+// rate, bitrate and keyframes, over the WebSocket or (with -rtc) over WebRTC. With -rtc
+// it also opens the input data channels and reports round trips and cursor reports on them.
 //
 //	go run ./tools/streamtest [-rtc] https://mydevices.<tailnet>.ts.net/mac/
 //
@@ -19,6 +20,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -29,6 +31,7 @@ func main() {
 	useRTC := flag.Bool("rtc", false, "receive video over WebRTC")
 	secs := flag.Int("t", 6, "seconds to run")
 	nudge := flag.Bool("nudge", false, "move the Mac's cursor 40 points right and back, to check input works")
+	display := flag.Int("display", 0, "display ID to show (0 = main; the IDs are printed in the displays event)")
 	flag.Parse()
 	page, _ := url.Parse(flag.Arg(0))
 	u := *page
@@ -46,8 +49,16 @@ func main() {
 		os.Exit(1)
 	}
 	c.SetReadLimit(64 << 20)
-	send := func(v any) { b, _ := json.Marshal(v); c.Write(ctx, websocket.MessageText, b) }
-	send(map[string]any{"t": "start", "w": 2556, "h": 2556, "fps": 60, "maxbr": 20000000, "localCursor": true})
+	var inputDC atomic.Pointer[webrtc.DataChannel]
+	send := func(v any) {
+		b, _ := json.Marshal(v)
+		if dc := inputDC.Load(); dc != nil && v.(map[string]any)["t"] != "start" {
+			dc.SendText(string(b))
+			return
+		}
+		c.Write(ctx, websocket.MessageText, b)
+	}
+	send(map[string]any{"t": "start", "w": 2556, "h": 2556, "fps": 60, "maxbr": 20000000, "localCursor": true, "display": *display})
 
 	send(map[string]any{"t": "diag"})
 	if *nudge {
@@ -61,6 +72,8 @@ func main() {
 	start := time.Now()
 	var wsFrames, wsBytes, rtcPkts, rtcBytes int
 	var firstWS, firstRTC time.Duration
+	var dcPongs, dcCursors atomic.Int64
+	var dcRTT atomic.Int64 // µs, latest
 	var pc *webrtc.PeerConnection
 	if *useRTC {
 		pc, _ = webrtc.NewPeerConnection(webrtc.Configuration{})
@@ -80,6 +93,31 @@ func main() {
 			}
 		})
 		pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) { fmt.Printf("webrtc %s after %v\n", s, time.Since(start).Round(time.Millisecond)) })
+		in, _ := pc.CreateDataChannel("input", nil)
+		mv, _ := pc.CreateDataChannel("move", &webrtc.DataChannelInit{Ordered: new(bool), MaxRetransmits: new(uint16)})
+		in.OnOpen(func() {
+			fmt.Printf("data channels open after %v\n", time.Since(start).Round(time.Millisecond))
+			inputDC.Store(in)
+			go func() {
+				for ctx.Err() == nil {
+					send(map[string]any{"t": "ping", "at": time.Now().UnixMicro()})
+					time.Sleep(500 * time.Millisecond)
+				}
+			}()
+		})
+		in.OnMessage(func(m webrtc.DataChannelMessage) {
+			var ev map[string]any
+			if json.Unmarshal(m.Data, &ev) == nil && ev["t"] == "pong" {
+				dcPongs.Add(1)
+				dcRTT.Store(time.Now().UnixMicro() - int64(ev["at"].(float64)))
+			}
+		})
+		mv.OnMessage(func(m webrtc.DataChannelMessage) {
+			dcCursors.Add(1)
+			if *nudge {
+				fmt.Printf("cursor (move channel) %s\n", m.Data)
+			}
+		})
 		offer, _ := pc.CreateOffer(nil)
 		done := webrtc.GatheringCompletePromise(pc)
 		pc.SetLocalDescription(offer)
@@ -102,7 +140,7 @@ func main() {
 				if *nudge {
 					fmt.Printf("cursor x=%.4f\n", ev["x"])
 				}
-			case "stats", "started", "rtc-failed", "error", "warn", "diag":
+			case "stats", "started", "rtc-failed", "error", "warn", "diag", "displays":
 				fmt.Println("event:", string(b))
 			}
 			continue
@@ -122,6 +160,8 @@ func main() {
 	fmt.Printf("websocket: %d frames, first after %v, %.2f Mbps\n", wsFrames, firstWS.Round(time.Millisecond), float64(wsBytes)*8/d/1e6)
 	if *useRTC {
 		fmt.Printf("webrtc:    %d RTP packets, first after %v, %.2f Mbps\n", rtcPkts, firstRTC.Round(time.Millisecond), float64(rtcBytes)*8/d/1e6)
+		fmt.Printf("input dc:  %d pongs, last round trip %v; %d cursor reports on the move channel\n",
+			dcPongs.Load(), time.Duration(dcRTT.Load())*time.Microsecond, dcCursors.Load())
 		pc.Close()
 	}
 }

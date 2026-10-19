@@ -33,7 +33,9 @@ https://devices.<your-tailnet>.ts.net/mac2/     → another one
 On a Mac, the screen is streamed as **hardware H.264** (ScreenCaptureKit + VideoToolbox in low-latency mode), at the resolution your phone or tablet actually displays.
 
 - **Video:** it goes over **WebRTC** (UDP over the tailnet, Google Congestion Control steering the encoder, minimal jitter buffer). Safari decodes it in hardware.
-- **Fallback:** if WebRTC can't connect, video stays on the WebSocket and is decoded with WebCodecs.
+- **Input:** taps, keys and scrolls ride WebRTC data channels too. Pointer positions use one that never resends, so a lost packet never holds up the next move.
+- **Fallback:** if WebRTC can't connect, video and input stay on the WebSocket, and video is decoded with WebCodecs.
+- **More than one display:** pick which one to show in the **⋯** panel. It switches live, and taps, the pointer and the cursor follow that display.
 - **Pointer:** it's drawn on the phone itself, so it moves the instant your finger does.
 
 - Nothing is sent while the screen is still. Once things stop moving, the last frame is re-sent a few times so text sharpens up.

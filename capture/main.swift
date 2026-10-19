@@ -8,7 +8,7 @@
 //   stdout: frames  [u32 big-endian length][u8 type][payload]
 //             type 1 = decoder config: [u16 json length][json {codec,w,h}][avcC]
 //             type 2 = video:          [u8 keyframe][u64 timestamp µs][AVCC NAL units]
-//             type 3 = event (json):   {"t":"started"|"error"|"cursor",...}
+//             type 3 = event (json):   {"t":"started"|"error"|"cursor"|"displays",...}
 //   stdin:   one JSON command per line (see `handle(_:)`)
 import AppKit
 import ApplicationServices
@@ -165,7 +165,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     private var timer: DispatchSourceTimer?
     private var params: [Int] = []
     private var startedEvent: [String: Any] = [:]
-    private var wanted: (Int, Int, Int, Bool)? // what the viewer asked for, for automatic retries
+    private var wanted: (Int, Int, Int, Bool, CGDirectDisplayID)? // what the viewer asked for, for automatic retries
     private var retries = 0
 
     /// macOS's capture service sometimes drops a session (it's busy, or the Mac is hot).
@@ -180,14 +180,15 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         log("capture interrupted (\(why)); retry \(retries) in \(delay)s")
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
             guard viewing else { return }
-            Task { self.stream = nil; self.params = []; await self.start(maxW: w.0, maxH: w.1, fps: w.2, cursor: w.3) }
+            Task { self.stream = nil; self.params = []; await self.start(maxW: w.0, maxH: w.1, fps: w.2, cursor: w.3, display: w.4) }
         }
     }
 
-    func start(maxW: Int, maxH: Int, fps: Int, cursor: Bool) async {
+    /// display 0 means the main display. One that's gone (unplugged) falls back to it too.
+    func start(maxW: Int, maxH: Int, fps: Int, cursor: Bool, display: CGDirectDisplayID) async {
         // Same settings and still running (a viewer coming back): just send a fresh keyframe.
-        wanted = (maxW, maxH, fps, cursor)
-        let p = [maxW, maxH, fps, cursor ? 1 : 0]
+        wanted = (maxW, maxH, fps, cursor, display)
+        let p = [maxW, maxH, fps, cursor ? 1 : 0, Int(display)]
         if stream != nil, p == params {
             resendConfig()
             event(startedEvent)
@@ -195,7 +196,8 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         }
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-            guard let d = content.displays.first(where: { $0.displayID == CGMainDisplayID() }) ?? content.displays.first else {
+            guard let d = content.displays.first(where: { $0.displayID == display })
+                    ?? content.displays.first(where: { $0.displayID == CGMainDisplayID() }) ?? content.displays.first else {
                 event(["t": "error", "msg": "no display"])
                 return
             }
@@ -235,9 +237,11 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
             stream = s
             params = p
             retries = 0
+            shownDisplay = d.displayID // input and cursor reports follow the display being shown
             startRefineTimer()
             startedEvent = ["t": "started", "w": w, "h": h, "nativeW": Int(nativeW), "nativeH": Int(nativeH),
-                            "ptW": Double(filter.contentRect.width), "ptH": Double(filter.contentRect.height)]
+                            "ptW": Double(filter.contentRect.width), "ptH": Double(filter.contentRect.height),
+                            "display": Int(d.displayID)]
             event(startedEvent)
         } catch {
             if !CGPreflightScreenCaptureAccess() {
@@ -313,7 +317,7 @@ final class Input {
     let src = CGEventSource(stateID: .hidSystemState)
     var down = [false, false, false]
 
-    var bounds: CGRect { CGDisplayBounds(CGMainDisplayID()) }
+    var bounds: CGRect { CGDisplayBounds(shownDisplay) }
     var pos: CGPoint { CGEvent(source: nil)?.location ?? .zero }
 
     func clamp(_ p: CGPoint) -> CGPoint {
@@ -459,6 +463,12 @@ let inputQ = DispatchQueue(label: "input", qos: .userInteractive)
 
 func num(_ v: Any?) -> Double { (v as? NSNumber)?.doubleValue ?? 0 }
 
+/// Clicks from a viewer that points directly (touch, mouse) carry their own position, so
+/// they land in the right place even if the move before them was lost or arrives late.
+func moveIfGiven(_ c: [String: Any], mods: CGEventFlags) {
+    if let x = c["x"] as? NSNumber, let y = c["y"] as? NSNumber { input.moveAbs(x.doubleValue, y.doubleValue, mods: mods) }
+}
+
 func handle(_ c: [String: Any]) {
     let mods = Input.flags(c["m"] as? [String] ?? [])
     switch c["t"] as? String {
@@ -467,6 +477,7 @@ func handle(_ c: [String: Any]) {
         if let br = c["br"] as? NSNumber { capture.enc.bitrate = br.intValue }
         let localCursor = c["localCursor"] as? Bool ?? false
         let viewer = c["viewer"] as? String ?? "a device"
+        let display = CGDirectDisplayID(max(0, min(num(c["display"]), Double(UInt32.max))))
         if !AXIsProcessTrusted() {
             event(["t": "warn", "msg": "Accessibility permission is needed for mouse and keyboard control"])
         }
@@ -477,8 +488,10 @@ func handle(_ c: [String: Any]) {
                 lockWatcher.reset()
                 cursorWatcher.reset()
                 panel.show(viewer: viewer) // shown before capture starts, so it can be left out of it
+                sendDisplays()
             }
-            await capture.start(maxW: max(320, w), maxH: max(240, h), fps: (10...120).contains(fps) ? fps : 60, cursor: !localCursor)
+            await capture.start(maxW: max(320, w), maxH: max(240, h), fps: (10...120).contains(fps) ? fps : 60,
+                                cursor: !localCursor, display: display)
         }
     case "stop":
         inputQ.async { input.releaseAll() }
@@ -489,14 +502,16 @@ func handle(_ c: [String: Any]) {
     case "release": inputQ.async { input.releaseAll() }
     case "kf": capture.requestKeyframe()
     case "resend": capture.resendConfig()
+    case "displays": DispatchQueue.main.async { sendDisplays() }
     case "diag": event(["t": "diag", "accessibility": AXIsProcessTrusted(), "screen": CGPreflightScreenCaptureAccess()])
     case "br": capture.setBitrate(Int(num(c["bps"])))
     case "abs": inputQ.async { input.moveAbs(num(c["x"]), num(c["y"]), mods: mods) }
     case "rel": inputQ.async { input.moveRel(num(c["dx"]), num(c["dy"]), mods: mods) }
-    case "btn": inputQ.async { input.button(Int(num(c["b"])), down: c["down"] as? Bool ?? false, clicks: Int(num(c["n"])), mods: mods) }
+    case "btn": inputQ.async { moveIfGiven(c, mods: mods); input.button(Int(num(c["b"])), down: c["down"] as? Bool ?? false, clicks: Int(num(c["n"])), mods: mods) }
     case "click":
         inputQ.async {
             let b = Int(num(c["b"])), n = max(1, Int(num(c["n"])))
+            moveIfGiven(c, mods: mods)
             input.button(b, down: true, clicks: n, mods: mods)
             input.button(b, down: false, clicks: n, mods: mods)
         }
@@ -566,7 +581,7 @@ final class CursorWatcher {
 
     private func poll() {
         guard viewing else { return }
-        let b = CGDisplayBounds(CGMainDisplayID())
+        let b = CGDisplayBounds(shownDisplay)
         if let p = CGEvent(source: nil)?.location, p != lastPos {
             lastPos = p
             event(["t": "cursor", "x": (p.x - b.minX) / b.width, "y": (p.y - b.minY) / b.height])
@@ -583,6 +598,22 @@ final class CursorWatcher {
         event(["t": "cursorImage", "png": png.base64EncodedString(),
                "w": img.size.width, "h": img.size.height, "hx": cur.hotSpot.x, "hy": cur.hotSpot.y])
     }
+}
+
+// MARK: - Displays
+
+/// The display being shown. Input positions and cursor reports are relative to it.
+var shownDisplay = CGMainDisplayID()
+
+/// Tells the viewer which displays this Mac has, so it can offer a choice. Main thread.
+func sendDisplays() {
+    let key = NSDeviceDescriptionKey("NSScreenNumber")
+    let list: [[String: Any]] = NSScreen.screens.compactMap { s in
+        guard let id = (s.deviceDescription[key] as? NSNumber)?.uint32Value else { return nil }
+        return ["id": Int(id), "name": s.localizedName, "main": CGDisplayIsMain(id) != 0,
+                "builtin": CGDisplayIsBuiltin(id) != 0, "w": Int(s.frame.width), "h": Int(s.frame.height)]
+    }
+    event(["t": "displays", "list": list])
 }
 
 // MARK: - Lock screen
@@ -638,6 +669,10 @@ let lockWatcher = LockWatcher()
 let cursorWatcher = CursorWatcher()
 let panel = SharePanel {
     event(["t": "stop-request"]) // mydevices ends the session and this process
+}
+// A display plugged in or removed: let the viewer update its list.
+NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { _ in
+    if viewing { sendDisplays() }
 }
 // Warm up ScreenCaptureKit while idle, so the first frame comes quickly. (No capture yet.)
 Task { _ = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) }

@@ -23,7 +23,8 @@ import (
 // browser ⇄ WebSocket ⇄ mydevices ⇄ stdin/stdout ⇄ mydevices-capture (ScreenCaptureKit + VideoToolbox)
 //
 // Binary messages to the browser are [type][payload] (1 = decoder config, 2 = video).
-// Text messages are JSON events. The browser sends JSON commands (input, start, keyframe).
+// Text messages are JSON events. The browser sends JSON commands (input, start, keyframe);
+// once WebRTC is up, input arrives on its data channels instead (see rtc.go).
 
 const (
 	minBitrate  = 1_000_000
@@ -34,6 +35,7 @@ const (
 var allowedCmds = map[string]bool{
 	"start": true, "kf": true, "abs": true, "rel": true, "btn": true, "click": true,
 	"scroll": true, "key": true, "text": true, "media": true, "clip-set": true, "clip-get": true, "diag": true, "resend": true,
+	"displays": true,
 }
 
 func helperPath() string {
@@ -148,7 +150,13 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 		switch typ {
 		case 3: // JSON event
 			var ev struct{ T string }
-			if json.Unmarshal(buf[1:], &ev) == nil && ev.T == "stop-request" {
+			json.Unmarshal(buf[1:], &ev)
+			if ev.T == "cursor" {
+				if s := viaRTC(); s != nil && s.sendMove(buf[1:]) {
+					return // 60 times a second: newest wins, never queued behind anything
+				}
+			}
+			if ev.T == "stop-request" {
 				log.Printf("■ stopped from the Mac")
 				a.audit("stopped-on-mac", viewer, "")
 				blockStreams(stopHold) // the viewer must not simply reconnect
@@ -269,6 +277,39 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
+	// One input command, from the WebSocket or a data channel. "start" and WebRTC
+	// negotiation only come over the WebSocket, handled below.
+	forward := func(c map[string]any, reply func([]byte)) {
+		t, _ := c["t"].(string)
+		switch {
+		case t == "ping":
+			c["t"] = "pong"
+			b, _ := json.Marshal(c)
+			reply(b)
+		case allowedCmds[t] && t != "start":
+			limit := 4096
+			if t == "clip-set" {
+				limit = 256 << 10
+			}
+			if s, ok := c["s"].(string); ok && len(s) > limit {
+				return
+			}
+			toHelper(c)
+		}
+	}
+	onInput := func(msg []byte, reply func([]byte)) {
+		var c map[string]any
+		if ctx.Err() == nil && json.Unmarshal(msg, &c) == nil {
+			forward(c, reply)
+		}
+	}
+	replyWS := func(b []byte) {
+		select {
+		case out <- outMsg{typ: websocket.MessageText, data: b}:
+		default:
+		}
+	}
+
 	// browser → helper
 	for {
 		typ, data, err := ws.Read(ctx)
@@ -288,13 +329,6 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 		}
 		t, _ := c["t"].(string)
 		switch {
-		case t == "ping":
-			c["t"] = "pong"
-			b, _ := json.Marshal(c)
-			select {
-			case out <- outMsg{typ: websocket.MessageText, data: b}:
-			default:
-			}
 		case t == "rtc-offer":
 			sdp, _ := c["sdp"].(string)
 			if old := rtc.Swap(nil); old != nil {
@@ -314,7 +348,7 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 				func() { // failed: back to the WebSocket
 					toHelper(map[string]any{"t": "resend"})
 					push(outMsg{typ: websocket.MessageText, data: jsonMsg(map[string]any{"t": "rtc-failed"})})
-				})
+				}, onInput)
 			if err != nil {
 				log.Printf("webrtc: %v", err)
 				push(outMsg{typ: websocket.MessageText, data: jsonMsg(map[string]any{"t": "rtc-failed"})})
@@ -334,15 +368,8 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 			c["br"] = min(bitrate.Load(), maxBitrate.Load())
 			c["viewer"] = viewer
 			toHelper(c)
-		case allowedCmds[t]:
-			limit := 4096
-			if t == "clip-set" {
-				limit = 256 << 10
-			}
-			if s, ok := c["s"].(string); ok && len(s) > limit {
-				continue
-			}
-			toHelper(c)
+		default:
+			forward(c, replyWS)
 		}
 	}
 }
