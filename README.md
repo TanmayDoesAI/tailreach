@@ -1,6 +1,10 @@
-# mydevices
+# tailreach
 
 Your own computers' screens, from any browser on your tailnet: iPhone, iPad, Android or another laptop. It works like Chrome Remote Desktop, but traffic stays inside your own Tailscale network.
+
+**Set it up:** follow [`SETUP.md`](SETUP.md). With Claude Code, ask it to *"set up tailreach on this Mac"*; the `tailreach-setup` agent in `.claude/agents/` follows that guide and stops for the steps only you can do.
+
+> The program is called `mydevices` on disk (binary, login item, settings folder). Renaming it would reset macOS permissions on existing installs.
 
 ```
 devices/                                        → type this in any browser on your tailnet
@@ -26,7 +30,11 @@ https://devices.<your-tailnet>.ts.net/mac2/     → another one
 
 ## Speed
 
-On a Mac, the screen is streamed as **hardware H.264** (ScreenCaptureKit + VideoToolbox in low-latency mode), at the resolution your phone or tablet actually displays. The browser decodes it in hardware (WebCodecs) and draws each frame the moment it arrives.
+On a Mac, the screen is streamed as **hardware H.264** (ScreenCaptureKit + VideoToolbox in low-latency mode), at the resolution your phone or tablet actually displays.
+
+- **Video:** it goes over **WebRTC** (UDP over the tailnet, Google Congestion Control steering the encoder, minimal jitter buffer). Safari decodes it in hardware.
+- **Fallback:** if WebRTC can't connect, video stays on the WebSocket and is decoded with WebCodecs.
+- **Pointer:** it's drawn on the phone itself, so it moves the instant your finger does.
 
 - Nothing is sent while the screen is still. Once things stop moving, the last frame is re-sent a few times so text sharpens up.
 - If the network can't keep up, the hub skips ahead to a fresh keyframe and lowers the bitrate. It never builds up lag. The bitrate climbs back up once the network is calm.
@@ -44,8 +52,9 @@ Every request has to pass all of these layers:
    - Trust is tied to that device's Tailscale identity, so a copied cookie doesn't work anywhere else.
    - Five wrong tries lock it for 15 minutes and send a notification to the Mac.
    - Set or reset it in the settings window (`./mydevices settings`) or from a terminal (`./mydevices password`; add `--off` to turn it off).
-4. **Passkey (Face ID / Touch ID).** Opening a session takes one Face ID prompt.
-   - A new device adds its passkey after entering the device password. With no password set, it needs a 6-digit code shown on the Mac instead.
+4. **Sign-in.** Use the device password, or a passkey (Face ID / Touch ID) as a shortcut.
+   - The device password alone signs you in, so a passkey problem never locks you out.
+   - With no device password set, adding a passkey needs a 6-digit code shown on the Mac.
    - Sessions are HttpOnly, Secure, SameSite=Strict cookies. They expire after 12 h, or after 1 h idle.
 5. **Hub pinning.** Devices behind a hub only accept connections from that one hub. The hub's node ID is pinned the first time it connects, so another machine on your tailnet can't pose as it.
 6. **Origin checks.** Only pages from your tailnet can open screen sockets, and sign-in requests must come from the hub's own origin.
@@ -54,6 +63,8 @@ Every request has to pass all of these layers:
 8. **Settings only on the Mac.** The settings window talks to mydevices over a Unix socket that only your macOS user can open. Nothing about settings is reachable over the network.
 9. **Screen and input only.** Viewers can see the screen, point, type, scroll and use the clipboard (secrets copied from password managers are never sent). There is no way to run commands, browse files or start background processes. The screen helper only exists during a session.
 10. **One viewer at a time.** A new session ends the previous one.
+11. **Stop means stop.** Pressing Stop on the Mac ends the session and refuses reconnects for 2 minutes.
+    - Changing the password, revoking a device or resetting passkeys ends live sessions immediately.
 
 To reset passkeys, delete `~/Library/Application Support/mydevices/mydevices/passkeys.json` and restart.
 

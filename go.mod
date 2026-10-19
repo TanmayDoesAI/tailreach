@@ -1,4 +1,4 @@
-module github.com/tanmay/mydevices
+module github.com/TanmayDoesAI/tailreach
 
 go 1.27.1
 
