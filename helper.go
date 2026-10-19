@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -51,6 +52,8 @@ func warmHelper() (*captureHelper, error) {
 		}
 	}
 	cmd := exec.Command(helperPath())
+	// The helper refuses to capture unless it was started by us (see capture/main.swift).
+	cmd.Env = append(os.Environ(), "MYDEVICES_PARENT="+strconv.Itoa(os.Getpid()))
 	stdin, _ := cmd.StdinPipe()
 	stdout, _ := cmd.StdoutPipe()
 	cmd.Stderr = os.Stderr

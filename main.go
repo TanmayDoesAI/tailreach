@@ -19,8 +19,8 @@ import (
 	"log"
 	"mime"
 	"net"
-	"net/netip"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -162,6 +162,9 @@ func run(o options) error {
 		}
 	}
 	a.sec = newSecurity(filepath.Join(o.stateDir, stateName))
+	if runtime.GOOS == "darwin" && os.Getppid() != 1 {
+		log.Printf("ℹ Running from a terminal: during sessions macOS will show that terminal app as sharing the screen. For everyday use run `mydevices install` instead.")
+	}
 	a.sec.applyKeepAwake()
 	go a.serveControl()
 	if o.hub || o.via == "" {

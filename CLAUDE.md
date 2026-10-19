@@ -31,6 +31,9 @@ go run ./tools/streamtest -rtc -t 6 https://<hub>.<tailnet>.ts.net/<name>/
 CGO_ENABLED=0 GOARCH=arm64 go vet .
 ```
 
+- **Never run `mydevices-capture` directly, and test against the login item (`make reload`), not a terminal-run hub.**
+  - macOS credits screen recording to whatever app launched the process, so a terminal run shows the terminal as "sharing".
+  - The helper refuses to start unless mydevices launched it (`MYDEVICES_PARENT`).
 - Web files are embedded at build time. Run with `--web-dir ./web` to edit the UI without rebuilding.
 - Swift builds with Command Line Tools only (`swiftc -swift-version 5`). There are no SwiftUI macros like `@State`; use `ObservableObject`.
 - The binary, signing identifiers (`com.mydevices.*`) and state dir keep the `mydevices` name **on purpose**: changing them resets the macOS permissions users have granted.

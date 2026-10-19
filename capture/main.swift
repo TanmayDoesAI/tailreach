@@ -268,6 +268,13 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
+        // Stop Sharing in macOS's own menu: end the session, exactly like our panel's Stop.
+        if (error as NSError).domain == SCStreamErrorDomain,
+           (error as NSError).code == SCStreamError.userStopped.rawValue {
+            wanted = nil
+            event(["t": "stop-request"])
+            return
+        }
         retryLater(error.localizedDescription)
     }
 
@@ -614,6 +621,14 @@ func arg(_ name: String) -> String? {
 
 if let sock = arg("--settings") {
     runSettings(socketPath: sock) // never returns
+}
+
+// Only mydevices may start the capture side. Run any other way (by hand from a terminal),
+// macOS would credit the screen recording to that app (Terminal, Warp, …) and show it as
+// "sharing" with no Stop that works, so refuse unless our own parent launched us.
+if ProcessInfo.processInfo.environment["MYDEVICES_PARENT"] != String(getppid()) {
+    FileHandle.standardError.write("mydevices-capture is started by mydevices; don't run it directly.\n".data(using: .utf8)!)
+    exit(2)
 }
 
 let app = NSApplication.shared
