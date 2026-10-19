@@ -121,7 +121,12 @@
     for (const s of ['password', 'signin', 'pair']) $('#' + s).classList.toggle('hidden', s !== id);
     $('#err').textContent = '';
   }
-  const fail = (e) => { $('#err').textContent = e.name === 'NotAllowedError' ? 'Cancelled.' : e.message; };
+  const fail = (e) => {
+    $('#err').textContent =
+      e.name === 'NotAllowedError' ? 'Cancelled.'
+      : e instanceof TypeError ? 'Can’t reach your Mac. Check that Tailscale is connected on this device, then try again.'
+      : e.message;
+  };
 
   async function signIn() {
     try {
