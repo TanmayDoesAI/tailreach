@@ -165,9 +165,28 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     private var timer: DispatchSourceTimer?
     private var params: [Int] = []
     private var startedEvent: [String: Any] = [:]
+    private var wanted: (Int, Int, Int, Bool)? // what the viewer asked for, for automatic retries
+    private var retries = 0
+
+    /// macOS's capture service sometimes drops a session (it's busy, or the Mac is hot).
+    /// Start it again a few times, backing off, while someone is still watching.
+    private func retryLater(_ why: String) {
+        guard let w = wanted, retries < 5 else {
+            event(["t": "error", "msg": why, "needsPermission": !CGPreflightScreenCaptureAccess()])
+            return
+        }
+        retries += 1
+        let delay = 0.3 * pow(2, Double(retries - 1))
+        log("capture interrupted (\(why)); retry \(retries) in \(delay)s")
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            guard viewing else { return }
+            Task { self.stream = nil; self.params = []; await self.start(maxW: w.0, maxH: w.1, fps: w.2, cursor: w.3) }
+        }
+    }
 
     func start(maxW: Int, maxH: Int, fps: Int, cursor: Bool) async {
         // Same settings and still running (a viewer coming back): just send a fresh keyframe.
+        wanted = (maxW, maxH, fps, cursor)
         let p = [maxW, maxH, fps, cursor ? 1 : 0]
         if stream != nil, p == params {
             q.async { self.enc.resendConfig() }
@@ -215,16 +234,22 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
             try await s.startCapture()
             stream = s
             params = p
+            retries = 0
             startRefineTimer()
             startedEvent = ["t": "started", "w": w, "h": h, "nativeW": Int(nativeW), "nativeH": Int(nativeH),
                             "ptW": Double(filter.contentRect.width), "ptH": Double(filter.contentRect.height)]
             event(startedEvent)
         } catch {
-            event(["t": "error", "msg": error.localizedDescription, "needsPermission": !CGPreflightScreenCaptureAccess()])
+            if !CGPreflightScreenCaptureAccess() {
+                event(["t": "error", "msg": error.localizedDescription, "needsPermission": true])
+            } else {
+                retryLater(error.localizedDescription)
+            }
         }
     }
 
     func stop() async {
+        wanted = nil
         timer?.cancel()
         if let s = stream { try? await s.stopCapture() }
         stream = nil
@@ -243,7 +268,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
-        event(["t": "error", "msg": error.localizedDescription])
+        retryLater(error.localizedDescription)
     }
 
     /// When the screen stops changing, re-encode the last frame a few times so text sharpens up.
@@ -427,13 +452,17 @@ func handle(_ c: [String: Any]) {
             event(["t": "warn", "msg": "Accessibility permission is needed for mouse and keyboard control"])
         }
         Task {
-            await MainActor.run { panel.show(viewer: viewer) } // shown before capture starts, so it can be left out of it
+            await MainActor.run {
+                viewing = true
+                lockWatcher.reset()
+                panel.show(viewer: viewer) // shown before capture starts, so it can be left out of it
+            }
             await capture.start(maxW: max(320, w), maxH: max(240, h), fps: (10...120).contains(fps) ? fps : 60, cursor: !localCursor)
         }
     case "stop":
         Task {
             await capture.stop()
-            await MainActor.run { panel.hide() }
+            await MainActor.run { viewing = false; panel.hide() }
         }
     case "kf": capture.requestKeyframe()
     case "resend": capture.resendConfig()
@@ -469,7 +498,7 @@ final class Clipboard {
         lastCount = pb.changeCount
         // Tell the viewer when something new is copied on the Mac.
         timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            guard let self, self.pb.changeCount != self.lastCount else { return }
+            guard viewing, let self, self.pb.changeCount != self.lastCount else { return }
             self.lastCount = self.pb.changeCount
             self.send(auto: true)
         }
@@ -493,6 +522,9 @@ final class Clipboard {
 
 // MARK: - Cursor
 
+/// True while a viewer is attached and capture is running. Watchers idle otherwise.
+var viewing = false
+
 /// Sends the cursor's position (60 Hz, on change) and its current shape (on change),
 /// so the viewer can draw it locally with no round-trip delay.
 final class CursorWatcher {
@@ -507,13 +539,14 @@ final class CursorWatcher {
     }
 
     private func poll() {
+        guard viewing else { return }
         let b = CGDisplayBounds(CGMainDisplayID())
         if let p = CGEvent(source: nil)?.location, p != lastPos {
             lastPos = p
             event(["t": "cursor", "x": (p.x - b.minX) / b.width, "y": (p.y - b.minY) / b.height])
         }
         tick += 1
-        guard tick % 6 == 0, let cur = NSCursor.currentSystem else { return } // shape: 10×/s
+        guard tick % 15 == 0, let cur = NSCursor.currentSystem else { return } // shape: 4×/s
         let img = cur.image
         guard let tiff = img.tiffRepresentation else { return }
         let shape = tiff.hashValue ^ Int(cur.hotSpot.x * 1000) ^ Int(cur.hotSpot.y)
@@ -538,7 +571,11 @@ final class LockWatcher {
         check()
     }
 
+    /// Report the current state again (a viewer just started).
+    func reset() { last = nil; check() }
+
     private func check() {
+        guard viewing else { return }
         let d = CGSessionCopyCurrentDictionary() as? [String: Any]
         let locked = (d?["CGSSessionScreenIsLocked"] as? Bool) ?? false
         if locked != last {

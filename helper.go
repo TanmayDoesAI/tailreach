@@ -17,8 +17,8 @@ import (
 // instead of starting a new capture from scratch.
 
 const (
-	captureLinger = 15 * time.Second // keep capturing this long after a viewer leaves
-	helperLinger  = 2 * time.Minute  // keep the idle process around this long
+	captureLinger = 10 * time.Second // keep capturing this long after a viewer leaves
+	helperLinger  = time.Minute      // keep the idle (near-zero CPU) process around this long
 )
 
 type captureHelper struct {
