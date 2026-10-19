@@ -180,6 +180,9 @@ func (a *app) viewer() http.Handler {
 			a.relayStream(w, r)
 			return
 		case "/caps":
+			if a.fastAvailable() {
+				go warmHelper() // the viewer is about to connect: get capture ready
+			}
 			writeJSON(w, map[string]any{"name": a.opt.name, "fast": a.fastAvailable(), "vnc": a.vncUp(), "user": consoleUser()})
 			return
 		}

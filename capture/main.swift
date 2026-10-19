@@ -1,10 +1,10 @@
 // mydevices-capture — the native half of mydevices on macOS.
 //
-//   mydevices-capture --viewer NAME     one viewer session: streams the screen as low-latency
-//                                       H.264, injects input, shows the "screen shared" panel
+//   mydevices-capture                   streams the screen as low-latency H.264 while a viewer is
+//                                       attached, injects input, shows the "screen shared" panel
 //   mydevices-capture --settings SOCK   the settings window (see settings.swift)
 //
-// Session mode is spawned by `mydevices` for each viewer and exits when the session ends.
+// `mydevices` keeps one warm for a short while after a viewer leaves, so coming back is instant.
 //   stdout: frames  [u32 big-endian length][u8 type][payload]
 //             type 1 = decoder config: [u16 json length][json {codec,w,h}][avcC]
 //             type 2 = video:          [u8 keyframe][u64 timestamp µs][AVCC NAL units]
@@ -88,6 +88,12 @@ final class Encoder {
         setBitrate(bitrate)
     }
 
+    /// The next keyframe carries the decoder config again (for a viewer that just reconnected).
+    func resendConfig() {
+        lastConfig = nil
+        forceKey = true
+    }
+
     func setBitrate(_ bps: Int) {
         bitrate = max(500_000, min(bps, 50_000_000))
         guard let s = session else { return }
@@ -157,8 +163,17 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     private var lastFrameAt = Date()
     private var refinements = 0
     private var timer: DispatchSourceTimer?
+    private var params: [Int] = []
+    private var startedEvent: [String: Any] = [:]
 
     func start(maxW: Int, maxH: Int, fps: Int, cursor: Bool) async {
+        // Same settings and still running (a viewer coming back): just send a fresh keyframe.
+        let p = [maxW, maxH, fps, cursor ? 1 : 0]
+        if stream != nil, p == params {
+            q.async { self.enc.resendConfig() }
+            event(startedEvent)
+            return
+        }
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
             guard let d = content.displays.first(where: { $0.displayID == CGMainDisplayID() }) ?? content.displays.first else {
@@ -198,9 +213,11 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
             try s.addStreamOutput(self, type: .screen, sampleHandlerQueue: q)
             try await s.startCapture()
             stream = s
+            params = p
             startRefineTimer()
-            event(["t": "started", "w": w, "h": h, "nativeW": Int(nativeW), "nativeH": Int(nativeH),
-                   "ptW": Double(filter.contentRect.width), "ptH": Double(filter.contentRect.height)])
+            startedEvent = ["t": "started", "w": w, "h": h, "nativeW": Int(nativeW), "nativeH": Int(nativeH),
+                            "ptW": Double(filter.contentRect.width), "ptH": Double(filter.contentRect.height)]
+            event(startedEvent)
         } catch {
             event(["t": "error", "msg": error.localizedDescription, "needsPermission": !CGPreflightScreenCaptureAccess()])
         }
@@ -210,6 +227,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         timer?.cancel()
         if let s = stream { try? await s.stopCapture() }
         stream = nil
+        params = []
     }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sb: CMSampleBuffer, of type: SCStreamOutputType) {
@@ -292,10 +310,22 @@ final class Input {
         down[b] = isDown
     }
 
-    func scroll(_ dx: Double, _ dy: Double) {
-        let e = CGEvent(scrollWheelEvent2Source: src, units: .pixel, wheelCount: 2,
-                        wheel1: Int32(dy.rounded()), wheel2: Int32(dx.rounded()), wheel3: 0)
-        e?.post(tap: .cghidEventTap)
+    /// Scrolls like a real trackpad: continuous pixel deltas tagged with a gesture phase
+    /// (began/changed/ended) or a momentum phase (begin/continue/end), so Mac apps glide,
+    /// decelerate and rubber-band natively.
+    func scroll(_ dx: Double, _ dy: Double, phase: String?, momentum: String?) {
+        guard let e = CGEvent(scrollWheelEvent2Source: src, units: .pixel, wheelCount: 2,
+                              wheel1: Int32(dy.rounded()), wheel2: Int32(dx.rounded()), wheel3: 0) else { return }
+        e.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+        e.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1, value: dy)
+        e.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis2, value: dx)
+        e.setIntegerValueField(.scrollWheelEventPointDeltaAxis1, value: Int64(dy.rounded()))
+        e.setIntegerValueField(.scrollWheelEventPointDeltaAxis2, value: Int64(dx.rounded()))
+        let phases: [String: Int64] = ["begin": 1, "change": 2, "end": 4, "cancel": 8]
+        let momenta: [String: Int64] = ["begin": 1, "continue": 2, "end": 3]
+        if let p = phase, let v = phases[p] { e.setIntegerValueField(.scrollWheelEventScrollPhase, value: v) }
+        if let m = momentum, let v = momenta[m] { e.setIntegerValueField(.scrollWheelEventMomentumPhase, value: v) }
+        e.post(tap: .cghidEventTap)
     }
 
     func key(_ name: String, mods: CGEventFlags) {
@@ -390,8 +420,16 @@ func handle(_ c: [String: Any]) {
         let w = Int(num(c["w"])), h = Int(num(c["h"])), fps = Int(num(c["fps"]))
         if let br = c["br"] as? NSNumber { capture.enc.bitrate = br.intValue }
         let localCursor = c["localCursor"] as? Bool ?? false
-        Task { await capture.start(maxW: max(320, w), maxH: max(240, h), fps: (10...120).contains(fps) ? fps : 60, cursor: !localCursor) }
-    case "stop": Task { await capture.stop() }
+        let viewer = c["viewer"] as? String ?? "a device"
+        Task {
+            await MainActor.run { panel.show(viewer: viewer) } // shown before capture starts, so it can be left out of it
+            await capture.start(maxW: max(320, w), maxH: max(240, h), fps: (10...120).contains(fps) ? fps : 60, cursor: !localCursor)
+        }
+    case "stop":
+        Task {
+            await capture.stop()
+            await MainActor.run { panel.hide() }
+        }
     case "kf": capture.requestKeyframe()
     case "br": capture.setBitrate(Int(num(c["bps"])))
     case "abs": inputQ.async { input.moveAbs(num(c["x"]), num(c["y"]), mods: mods) }
@@ -403,7 +441,7 @@ func handle(_ c: [String: Any]) {
             input.button(b, down: true, clicks: n, mods: mods)
             input.button(b, down: false, clicks: n, mods: mods)
         }
-    case "scroll": inputQ.async { input.scroll(num(c["dx"]), num(c["dy"])) }
+    case "scroll": inputQ.async { input.scroll(num(c["dx"]), num(c["dy"]), phase: c["ph"] as? String, momentum: c["mo"] as? String) }
     case "key": inputQ.async { input.key(c["k"] as? String ?? "", mods: mods) }
     case "text": inputQ.async { input.type(c["s"] as? String ?? "") }
     case "media": inputQ.async { input.media(c["k"] as? String ?? "") }
@@ -520,9 +558,11 @@ app.setActivationPolicy(.accessory) // no Dock icon, no menu bar
 let clipboard = Clipboard()
 let lockWatcher = LockWatcher()
 let cursorWatcher = CursorWatcher()
-let panel = SharePanel(viewer: arg("--viewer") ?? "a device") {
-    event(["t": "stop-request"]) // mydevices ends the session, which ends this process
+let panel = SharePanel {
+    event(["t": "stop-request"]) // mydevices ends the session and this process
 }
+// Warm up ScreenCaptureKit while idle, so the first frame comes quickly. (No capture yet.)
+Task { _ = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) }
 
 // Ask for permissions up front so macOS lists this helper in System Settings.
 if !CGPreflightScreenCaptureAccess() { CGRequestScreenCaptureAccess() }

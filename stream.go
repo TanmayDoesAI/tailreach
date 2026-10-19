@@ -1,12 +1,9 @@
 package main
 
 import (
-	"bufio"
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -14,14 +11,14 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
 )
 
-// The fast path: H.264 from mydevices-capture, relayed to the browser's WebCodecs decoder.
+// The fast path: H.264 from mydevices-capture (kept warm, see helper.go), relayed to the
+// browser's WebCodecs decoder.
 //
 // browser ⇄ WebSocket ⇄ mydevices ⇄ stdin/stdout ⇄ mydevices-capture (ScreenCaptureKit + VideoToolbox)
 //
@@ -89,27 +86,20 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 		a.audit("stream-end", viewer, time.Since(start).Round(time.Second).String())
 	}()
 
-	// The helper shows the "screen is shared" panel on the Mac for as long as it runs.
-	cmd := exec.CommandContext(ctx, helperPath(), "--viewer", viewer)
-	stdin, _ := cmd.StdinPipe()
-	stdout, _ := cmd.StdoutPipe()
-	cmd.Stderr = os.Stderr
-	if err := cmd.Start(); err != nil {
+	h, err := warmHelper()
+	if err != nil {
 		ws.Close(websocket.StatusInternalError, "capture helper failed to start")
 		return
 	}
-	defer cmd.Wait()
-	defer stdin.Close()
-
-	var inMu sync.Mutex
-	toHelper := func(v any) {
-		b, _ := json.Marshal(v)
-		inMu.Lock()
-		stdin.Write(append(b, '\n'))
-		inMu.Unlock()
-	}
+	toHelper := h.send
 
 	out := make(chan outMsg, 256)
+	push := func(m outMsg) {
+		select {
+		case out <- m:
+		case <-ctx.Done():
+		}
+	}
 	var (
 		bitrate    atomic.Int64
 		maxBitrate atomic.Int64
@@ -121,54 +111,47 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 	maxBitrate.Store(20_000_000)
 
 	// helper → queue, dropping video while the link is congested
+	waitKey := false
+	detach := h.attach(func(typ byte, buf []byte) {
+		switch typ {
+		case 3: // JSON event
+			var ev struct{ T string }
+			if json.Unmarshal(buf[1:], &ev) == nil && ev.T == "stop-request" {
+				log.Printf("■ stopped from the Mac")
+				h.kill() // Stop pressed on the Mac's panel
+				cancel()
+				return
+			}
+			push(outMsg{typ: websocket.MessageText, data: buf[1:]})
+		case 1: // decoder config: never dropped
+			push(outMsg{typ: websocket.MessageBinary, data: buf})
+		case 2:
+			key := len(buf) > 1 && buf[1] == 1
+			if waitKey && !key {
+				drops.Add(1)
+				return
+			}
+			waitKey = false
+			if len(out) >= backlogHigh {
+				// The network can't keep up: skip ahead to a fresh keyframe at a lower bitrate.
+				drops.Add(1)
+				waitKey = true
+				congested.Store(true)
+				br := max(minBitrate, bitrate.Load()*6/10)
+				bitrate.Store(br)
+				toHelper(map[string]any{"t": "br", "bps": br})
+				toHelper(map[string]any{"t": "kf"})
+				return
+			}
+			push(outMsg{typ: websocket.MessageBinary, data: buf, key: key})
+		}
+	})
+	defer detach()
 	go func() {
-		defer cancel()
-		rd := bufio.NewReaderSize(stdout, 1<<20)
-		hdr := make([]byte, 5)
-		waitKey := false
-		for {
-			if _, err := io.ReadFull(rd, hdr); err != nil {
-				return
-			}
-			n := binary.BigEndian.Uint32(hdr[:4])
-			if n > 64<<20 {
-				return
-			}
-			buf := make([]byte, n+1)
-			buf[0] = hdr[4]
-			if _, err := io.ReadFull(rd, buf[1:]); err != nil {
-				return
-			}
-			switch hdr[4] {
-			case 3: // JSON event
-				var ev struct{ T string }
-				if json.Unmarshal(buf[1:], &ev) == nil && ev.T == "stop-request" {
-					log.Printf("■ stopped from the Mac")
-					return // Stop pressed on the Mac's panel
-				}
-				out <- outMsg{typ: websocket.MessageText, data: buf[1:]}
-			case 1: // decoder config: never dropped
-				out <- outMsg{typ: websocket.MessageBinary, data: buf}
-			case 2:
-				key := len(buf) > 1 && buf[1] == 1
-				if waitKey && !key {
-					drops.Add(1)
-					continue
-				}
-				waitKey = false
-				if len(out) >= backlogHigh {
-					// The network can't keep up: skip ahead to a fresh keyframe at a lower bitrate.
-					drops.Add(1)
-					waitKey = true
-					congested.Store(true)
-					br := max(minBitrate, bitrate.Load()*6/10)
-					bitrate.Store(br)
-					toHelper(map[string]any{"t": "br", "bps": br})
-					toHelper(map[string]any{"t": "kf"})
-					continue
-				}
-				out <- outMsg{typ: websocket.MessageBinary, data: buf, key: key}
-			}
+		select {
+		case <-h.dead:
+			cancel()
+		case <-ctx.Done():
 		}
 	}()
 
@@ -196,7 +179,8 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 		t := time.NewTicker(time.Second)
 		defer t.Stop()
 		calm := 0
-		for {
+		path := a.connPath(ctx, r.RemoteAddr)
+		for i := 1; ; i++ {
 			select {
 			case <-ctx.Done():
 				return
@@ -209,8 +193,11 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 				bitrate.Store(br)
 				toHelper(map[string]any{"t": "br", "bps": br})
 			}
+			if i%5 == 0 {
+				path = a.connPath(ctx, r.RemoteAddr)
+			}
 			stats, _ := json.Marshal(map[string]any{
-				"t": "stats", "br": bitrate.Load(), "kbps": sentBytes.Swap(0) * 8 / 1000, "drops": drops.Swap(0),
+				"t": "stats", "br": bitrate.Load(), "kbps": sentBytes.Swap(0) * 8 / 1000, "drops": drops.Swap(0), "path": path,
 			})
 			select {
 			case out <- outMsg{typ: websocket.MessageText, data: stats}:
@@ -250,6 +237,7 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 				maxBitrate.Store(min(int64(mb), 50_000_000))
 			}
 			c["br"] = min(bitrate.Load(), maxBitrate.Load())
+			c["viewer"] = viewer
 			toHelper(c)
 		case allowedCmds[t]:
 			limit := 4096

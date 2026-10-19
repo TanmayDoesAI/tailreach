@@ -113,6 +113,8 @@ body.bar-hidden #bar, body.bar-hidden #keys { display: none; }
 .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--red); }
 body[data-state="connecting"] .dot { background: var(--amber); }
 body[data-state="on"] .dot { background: var(--green); }
+body.relayed .dot, body.stale .dot { background: var(--amber); }
+body.stale #screen { opacity: .7; transition: opacity .3s; }
 
 /* ---------- Space arrows ---------- */
 .space {

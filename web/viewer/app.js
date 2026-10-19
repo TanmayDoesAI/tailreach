@@ -42,7 +42,15 @@ let wakeLock = null;
 const stats = { frames: 0, fps: 0, rtt: 0, kbps: 0 };
 
 // ---------- connection ----------
+let hasFrame = false;   // once we've shown the screen, reconnects keep it up instead of a splash
+
 function setState(state, text) {
+  if (state === 'connecting' && hasFrame) {
+    document.body.classList.add('stale');   // last frame stays; the pill says what's happening
+    $('#statusText').textContent = text;
+    return;
+  }
+  document.body.classList.remove('stale');
   document.body.dataset.state = state;   // 'off' | 'connecting' | 'on'
   $('#splashText').textContent = text;
   $('#statusText').textContent = text;
@@ -181,7 +189,8 @@ function paint() {
   ctx2d.drawImage(frame, 0, 0, canvas.width, canvas.height);
   frame.close();
   stats.frames++;
-  if (document.body.dataset.state !== 'on') { setState('on', 'Connected'); drawCursor(); }
+  hasFrame = true;
+  if (document.body.dataset.state !== 'on' || document.body.classList.contains('stale')) { setState('on', 'Connected'); drawCursor(); }
 }
 
 function onEvent(ev) {
@@ -192,7 +201,11 @@ function onEvent(ev) {
       if (performance.now() - lastLocalMove > 250) { cursor.x = ev.x; cursor.y = ev.y; drawCursor(); followCursor(); }
       break;
     case 'cursorImage': setCursorImage(ev); break;
-    case 'stats': stats.kbps = ev.kbps; break;
+    case 'stats':
+      stats.kbps = ev.kbps;
+      stats.path = ev.path || '';
+      document.body.classList.toggle('relayed', !!stats.path && stats.path !== 'direct');
+      break;
     case 'pong': stats.rtt = Math.round(performance.now() - ev.at); break;
     case 'lock': setLocked(ev.locked); break;
     case 'error':
@@ -210,8 +223,11 @@ setInterval(() => {
   send({ t: 'ping', at: performance.now() });
   stats.fps = stats.frames; stats.frames = 0;
   if (document.body.dataset.state === 'on') {
-    $('#statusText').textContent = `${stats.rtt} ms`;
-    $('#status').title = `${stats.fps} fps · ${(stats.kbps / 1000).toFixed(1)} Mbps`;
+    if (!document.body.classList.contains('stale')) {
+      const relayed = stats.path && stats.path !== 'direct';
+      $('#statusText').textContent = `${stats.rtt} ms${relayed ? ' · relayed' : ''}`;
+    }
+    $('#status').title = `${stats.path || 'unknown path'} · ${stats.fps} fps · ${(stats.kbps / 1000).toFixed(1)} Mbps`;
   }
 }, 1000);
 
@@ -424,8 +440,34 @@ function touchInfo(list) {
   return { x, y, dist, n: list.length };
 }
 
+// Trackpad-style scrolling: the Mac gets gesture phases while fingers are down, then a
+// decaying momentum tail after they lift, so apps glide and rubber-band natively.
+let momentumRaf = 0;
+function startMomentum(vx, vy) {   // px per ms
+  if (Math.hypot(vx, vy) < 0.2) return;
+  let last = performance.now(), first = true;
+  const step = (now) => {
+    const dt = Math.min(34, now - last);
+    last = now;
+    send({ t: 'scroll', dx: vx * dt, dy: vy * dt, mo: first ? 'begin' : 'continue' });
+    first = false;
+    const decay = Math.pow(0.9965, dt);   // close to iOS's normal deceleration
+    vx *= decay; vy *= decay;
+    if (Math.hypot(vx, vy) < 0.02) { momentumRaf = 0; send({ t: 'scroll', dx: 0, dy: 0, mo: 'end' }); return; }
+    momentumRaf = requestAnimationFrame(step);
+  };
+  momentumRaf = requestAnimationFrame(step);
+}
+function stopMomentum() {
+  if (!momentumRaf) return;
+  cancelAnimationFrame(momentumRaf);
+  momentumRaf = 0;
+  send({ t: 'scroll', dx: 0, dy: 0, mo: 'end' });
+}
+
 surface.addEventListener('touchstart', (e) => {
   e.preventDefault();
+  stopMomentum();   // touching again catches the glide, like on a real trackpad
   const t = touchInfo(e.touches);
   const now = performance.now();
   if (!g.active) {
@@ -491,11 +533,17 @@ surface.addEventListener('touchmove', (e) => {
     if (!g.mode) {
       const ratio = t.dist / (g.sdist || 1);
       if (Math.abs(ratio - 1) > 0.12) g.mode = 'pinch';
-      else if (Math.hypot(t.x - g.sx, t.y - g.sy) > MOVE_SLOP) g.mode = 'scroll';
+      else if (Math.hypot(t.x - g.sx, t.y - g.sy) > MOVE_SLOP) {
+        g.mode = 'scroll';
+        g.samples = [];
+        send({ t: 'scroll', dx: 0, dy: 0, ph: 'begin' });
+      }
     }
     if (g.mode === 'scroll') {
       const k = SCROLL_GAIN * (settings.natural ? 1 : -1);
-      send({ t: 'scroll', dx: dx * k, dy: dy * k });
+      send({ t: 'scroll', dx: dx * k, dy: dy * k, ph: 'change' });
+      g.samples.push({ t: now, dx: dx * k, dy: dy * k });
+      while (g.samples.length && now - g.samples[0].t > 100) g.samples.shift();
     } else if (g.mode === 'pinch') {
       zoomAt(g.sz * (t.dist / (g.sdist || 1)), t.x, t.y);
       view.x += dx; view.y += dy;   // pinch also pans
@@ -513,7 +561,16 @@ function endTouch(e) {
   clearTimeout(g.longTimer);
   const dur = performance.now() - g.start;
 
-  if (g.mode === 'drag') {
+  if (g.mode === 'scroll') {
+    send({ t: 'scroll', dx: 0, dy: 0, ph: 'end' });
+    // Fling velocity from the last ~100 ms of movement.
+    const smp = g.samples.filter((p) => performance.now() - p.t < 120);
+    if (smp.length >= 2) {
+      const span = Math.max(16, smp[smp.length - 1].t - smp[0].t);
+      const sx = smp.reduce((a, p) => a + p.dx, 0), sy = smp.reduce((a, p) => a + p.dy, 0);
+      startMomentum(sx / span, sy / span);
+    }
+  } else if (g.mode === 'drag') {
     send({ t: 'btn', b: 0, down: false, n: 1 });
   } else if (g.maxN === 1 && !g.moved && !g.mode && dur < LONG_PRESS_MS) {
     if (settings.mode === 'touch') {

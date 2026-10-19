@@ -6,10 +6,11 @@ import SwiftUI
 
 final class SharePanel {
     private let panel: NSPanel
+    private let model = PanelClock()
 
-    init(viewer: String, onStop: @escaping () -> Void) {
+    init(onStop: @escaping () -> Void) {
         let size = NSSize(width: 300, height: 64)
-        let host = FirstClickHostingView(rootView: SharePanelView(viewer: viewer, started: Date(), onStop: onStop))
+        let host = FirstClickHostingView(rootView: SharePanelView(clock: model, onStop: onStop))
         host.frame = NSRect(origin: .zero, size: size)
 
         panel = NSPanel(contentRect: host.frame, styleMask: [.nonactivatingPanel, .borderless],
@@ -23,11 +24,21 @@ final class SharePanel {
         panel.hidesOnDeactivate = false
         panel.contentView = host
 
-        if let f = NSScreen.main?.visibleFrame {
-            panel.setFrameOrigin(NSPoint(x: f.maxX - size.width - 12, y: f.maxY - size.height - 12))
+    }
+
+    /// Shown while the screen is being captured; hidden as soon as it stops.
+    func show(viewer: String) {
+        if !panel.isVisible {
+            model.started = Date()
+            if let f = NSScreen.main?.visibleFrame {
+                panel.setFrameOrigin(NSPoint(x: f.maxX - panel.frame.width - 12, y: f.maxY - panel.frame.height - 12))
+            }
         }
+        model.viewer = viewer
         panel.orderFrontRegardless()
     }
+
+    func hide() { panel.orderOut(nil) }
 }
 
 /// Lets the Stop button work on the first click without activating anything.
@@ -39,6 +50,8 @@ final class FirstClickHostingView<V: View>: NSHostingView<V> {
 /// which needs SwiftUI macro plugins that only ship with full Xcode.)
 final class PanelClock: ObservableObject {
     @Published var now = Date()
+    @Published var viewer = ""
+    @Published var started = Date()
     @Published var pulse = false
     private var timer: Timer?
 
@@ -49,11 +62,11 @@ final class PanelClock: ObservableObject {
 }
 
 struct SharePanelView: View {
-    let viewer: String
-    let started: Date
+    @ObservedObject var clock: PanelClock
     let onStop: () -> Void
-    @ObservedObject private var clock = PanelClock()
 
+    private var viewer: String { clock.viewer }
+    private var started: Date { clock.started }
     private var now: Date { clock.now }
     private var pulse: Bool { clock.pulse }
 
