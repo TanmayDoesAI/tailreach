@@ -1,6 +1,7 @@
 package main
 
 import (
+	crand "crypto/rand"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -14,8 +15,9 @@ import (
 	"github.com/pion/interceptor/pkg/cc"
 	"github.com/pion/interceptor/pkg/gcc"
 	"github.com/pion/rtcp"
+	"github.com/pion/rtp"
+	"github.com/pion/rtp/codecs"
 	"github.com/pion/webrtc/v4"
-	"github.com/pion/webrtc/v4/pkg/media"
 )
 
 // WebRTC video: the same hardware H.264, but carried the way AirPlay and FaceTime carry
@@ -53,16 +55,24 @@ func (a *app) iceMux() (ice.UDPMux, error) {
 
 type rtcSession struct {
 	pc        *webrtc.PeerConnection
-	track     *webrtc.TrackLocalStaticSample
+	track     *webrtc.TrackLocalStaticRTP
 	connected atomic.Bool
 	est       atomic.Value // cc.BandwidthEstimator
 	sentBytes atomic.Int64
 
-	mu     sync.Mutex
-	sps    [][]byte
-	pps    [][]byte
-	lastTS uint64
+	mu      sync.Mutex
+	sps     [][]byte
+	pps     [][]byte
+	pkt     rtp.Packetizer
+	basePTS uint64 // µs of the first frame
+	baseRTP uint32
+	lastRTP uint32
+	started bool
+	lastKF  time.Time
 }
+
+// Keyframes are expensive; heavy loss can ask for one per packet. One per this long is plenty.
+const keyframeEvery = 300 * time.Millisecond
 
 // newRTC answers the browser's offer. onKeyframe is called when the browser asks for one.
 func (a *app) newRTC(offer string, maxBitrate int, onKeyframe, onConnected, onFailed func()) (*rtcSession, string, error) {
@@ -91,7 +101,11 @@ func (a *app) newRTC(offer string, maxBitrate int, onKeyframe, onConnected, onFa
 		return gcc.NewSendSideBWE(
 			gcc.SendSideBWEInitialBitrate(6_000_000),
 			gcc.SendSideBWEMinBitrate(minBitrate),
-			gcc.SendSideBWEMaxBitrate(maxBitrate))
+			gcc.SendSideBWEMaxBitrate(maxBitrate),
+			// No pacer queue: each frame goes out the moment it's encoded. A pacer queue can
+			// grow without limit when the estimate drops, adding hidden delay; the encoder's
+			// own rate control (steered from the estimate) keeps us within the path instead.
+			gcc.SendSideBWEPacer(gcc.NewNoOpPacer()))
 	})
 	if err != nil {
 		return nil, "", err
@@ -116,7 +130,7 @@ func (a *app) newRTC(offer string, maxBitrate int, onKeyframe, onConnected, onFa
 		return nil, "", err
 	}
 	s.pc = pc
-	s.track, err = webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264, ClockRate: 90000}, "screen", "mydevices")
+	s.track, err = webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264, ClockRate: 90000}, "screen", "mydevices")
 	if err != nil {
 		pc.Close()
 		return nil, "", err
@@ -126,6 +140,9 @@ func (a *app) newRTC(offer string, maxBitrate int, onKeyframe, onConnected, onFa
 		pc.Close()
 		return nil, "", err
 	}
+	// SSRC and payload type are filled in per connection by the track.
+	s.pkt = rtp.NewPacketizer(1200, 0, 0, &codecs.H264Payloader{}, rtp.NewRandomSequencer(), 90000)
+	s.baseRTP = randUint32()
 	go func() { // keyframe requests from the browser (decoder reset, heavy loss)
 		for {
 			pkts, _, err := sender.ReadRTCP()
@@ -135,7 +152,15 @@ func (a *app) newRTC(offer string, maxBitrate int, onKeyframe, onConnected, onFa
 			for _, p := range pkts {
 				switch p.(type) {
 				case *rtcp.PictureLossIndication, *rtcp.FullIntraRequest:
-					onKeyframe()
+					s.mu.Lock()
+					due := time.Since(s.lastKF) >= keyframeEvery
+					if due {
+						s.lastKF = time.Now()
+					}
+					s.mu.Unlock()
+					if due {
+						onKeyframe()
+					}
 				}
 			}
 		}
@@ -198,29 +223,47 @@ func (s *rtcSession) setConfig(msg []byte) {
 }
 
 // writeFrame takes a helper video message ([2][u8 key][u64 µs][AVCC NALs]) and sends it.
+// Each frame's RTP timestamp is its own capture time, so the browser's jitter buffer
+// sees true timing, including long still stretches between bursts of movement.
 func (s *rtcSession) writeFrame(msg []byte) error {
 	if len(msg) < 10 {
 		return nil
 	}
 	key := msg[1] == 1
-	ts := binary.BigEndian.Uint64(msg[2:10])
+	pts := binary.BigEndian.Uint64(msg[2:10])
 	s.mu.Lock()
-	dur := time.Duration(0)
-	if s.lastTS != 0 && ts > s.lastTS {
-		dur = time.Duration(ts-s.lastTS) * time.Microsecond
+	if !s.started {
+		s.started, s.basePTS = true, pts
 	}
-	s.lastTS = ts
+	ts := s.baseRTP + uint32((pts-s.basePTS)*90/1000) // wraps naturally
+	if pts < s.basePTS || (ts-s.lastRTP > 1<<31 && s.lastRTP != 0) {
+		ts = s.lastRTP + 1 // never step backwards
+	}
+	s.lastRTP = ts
 	var annexB []byte
 	if key { // decoders need SPS/PPS in front of every keyframe
+		s.lastKF = time.Now()
 		for _, n := range append(append([][]byte{}, s.sps...), s.pps...) {
 			annexB = append(append(annexB, 0, 0, 0, 1), n...)
 		}
 	}
-	s.mu.Unlock()
 	annexB = appendAnnexB(annexB, msg[10:])
-	dur = min(max(dur, time.Millisecond), time.Second)
+	pkts := s.pkt.Packetize(annexB, 0)
+	s.mu.Unlock()
 	s.sentBytes.Add(int64(len(annexB)))
-	return s.track.WriteSample(media.Sample{Data: annexB, Duration: dur})
+	for _, p := range pkts {
+		p.Timestamp = ts
+		if err := s.track.WriteRTP(p); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func randUint32() uint32 {
+	var b [4]byte
+	crand.Read(b[:])
+	return binary.BigEndian.Uint32(b[:])
 }
 
 func (s *rtcSession) close() { s.pc.Close() }

@@ -38,6 +38,7 @@ let locked = false;
 let decoder = null;
 let waitKey = true;
 let retry = 0;
+let stopped = false;   // Stop was pressed on the Mac: don't reconnect until asked
 let wakeLock = null;
 const stats = { frames: 0, fps: 0, rtt: 0, kbps: 0 };
 
@@ -83,7 +84,7 @@ async function boot() {
 }
 
 function connect() {
-  if (ws) return;
+  if (ws || stopped) return;
   setState('connecting', retry ? 'Reconnecting' : 'Connecting');
   const url = new URL('stream', location.href);
   url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -99,14 +100,39 @@ function connect() {
     startRTC();   // video starts on the WebSocket and moves to WebRTC once it connects
   };
   ws.onmessage = (e) => (typeof e.data === 'string' ? onEvent(JSON.parse(e.data)) : onBinary(e.data));
-  ws.onclose = () => {
+  let opened = false;
+  ws.addEventListener('open', () => { opened = true; });
+  ws.onclose = async (e) => {
     ws = null;
     stopRTC(false);
     resetDecoder();
+    if (e.code === 4001) return stoppedOnMac();
+    if (!opened && retry >= 1) {
+      // Refused before it opened: find out why instead of retrying blindly.
+      const r = await fetch('stream', { cache: 'no-store' }).catch(() => null);
+      if (r?.status === 401) return location.replace('/login?next=' + encodeURIComponent(location.pathname));
+      if (r?.status === 423) return stoppedOnMac();
+    }
     if (document.visibilityState === 'visible') {
       setState('connecting', 'Reconnecting');
       setTimeout(connect, Math.min(5000, 300 * 2 ** retry++));
     }
+  };
+}
+
+function stoppedOnMac() {
+  stopped = true;
+  hasFrame = false;
+  setState('off', 'Screen sharing was stopped on the Mac.');
+  const a = $('#splashAction');
+  splashAction('Try again', '');
+  a.onclick = (e) => {
+    e.preventDefault();
+    a.classList.add('hidden');
+    a.onclick = null;
+    stopped = false;
+    retry = 0;
+    connect();
   };
 }
 
@@ -141,7 +167,7 @@ function onBinary(buf) {
     resetDecoder();
     decoder = new VideoDecoder({
       output: drawFrame,
-      error: (err) => { console.warn('decoder', err); resetDecoder(); send({ t: 'kf' }); },
+      error: (err) => { console.warn('decoder', err); resetDecoder(); send({ t: 'resend' }); },
     });
     decoder.configure({
       codec: cfg.codec, codedWidth: cfg.w, codedHeight: cfg.h, description,
@@ -202,6 +228,9 @@ function paint() {
 const video = $('#video');
 let pc = null;
 let rtcTimer = 0;
+let rtcStall = 0;
+let rtcRetry = 0;
+let rtcRetries = 0;
 
 async function startRTC() {
   if (!window.RTCPeerConnection || store.get('transport', 'auto') === 'ws') return;
@@ -222,7 +251,11 @@ async function startRTC() {
       else watchVideo();   // Firefox: no per-frame callback, so poll playback instead
     };
     pc.onconnectionstatechange = () => {
-      if (pc && ['failed', 'closed'].includes(pc.connectionState)) fallbackToWS();
+      if (!pc) return;
+      clearTimeout(rtcStall);
+      if (['failed', 'closed'].includes(pc.connectionState)) fallbackToWS();
+      // 'disconnected' can recover on its own; if it doesn't soon, keep the picture moving over the WebSocket.
+      else if (pc.connectionState === 'disconnected') rtcStall = setTimeout(fallbackToWS, 2000);
     };
     await pc.setLocalDescription(await pc.createOffer());
     await gathered(pc, 1000);
@@ -244,11 +277,16 @@ function gathered(conn, ms) {
 }
 
 function fallbackToWS() {
-  if (pc) stopRTC(true);
+  if (!pc) return;
+  stopRTC(true);
+  // Video carries on over the WebSocket; try WebRTC again a little later (backing off).
+  clearTimeout(rtcRetry);
+  if (rtcRetries < 4) rtcRetry = setTimeout(() => { if (ws?.readyState === 1) startRTC(); }, 5000 * 2 ** rtcRetries++);
 }
 
 function stopRTC(tellServer) {
   clearTimeout(rtcTimer);
+  clearTimeout(rtcStall);
   if (pc) {
     pc.close();
     pc = null;
@@ -286,6 +324,7 @@ function onVideoFrame(now, meta, polled) {
   if (!document.body.classList.contains('rtc')) {
     document.body.classList.add('rtc');
     clearTimeout(rtcTimer);
+    rtcRetries = 0;
   }
   hasFrame = true;
   if (document.body.dataset.state !== 'on' || document.body.classList.contains('stale')) { setState('on', 'Connected'); drawCursor(); }
@@ -297,7 +336,8 @@ function onEvent(ev) {
     case 'started': screenPts.w = ev.ptW; screenPts.h = ev.ptH; drawCursor(); break;
     case 'cursor':
       // The Mac's position is the truth, but while you're moving it we trust our prediction.
-      if (performance.now() - lastLocalMove > 250) { cursor.x = ev.x; cursor.y = ev.y; drawCursor(); followCursor(); }
+      macCursor = ev;
+      settleCursor();
       break;
     case 'cursorImage': setCursorImage(ev); break;
     case 'stats':
@@ -418,6 +458,21 @@ const cursor = { x: 0.5, y: 0.5 };   // remote cursor, normalised 0..1
 const screenPts = { w: 1440, h: 900 }; // the Mac's screen size in points
 const cursorShape = { w: 0, h: 0, hx: 0, hy: 0 };
 let lastLocalMove = 0;
+let macCursor = null;   // latest position reported by the Mac
+let settleTimer = 0;
+
+// The Mac's position is the truth, but while you're moving we trust our prediction.
+// The latest report is kept and applied once movement settles, so we never miss the final one.
+function settleCursor() {
+  clearTimeout(settleTimer);
+  if (!macCursor) return;
+  const wait = 250 - (performance.now() - lastLocalMove);
+  if (wait > 0) { settleTimer = setTimeout(settleCursor, wait + 5); return; }
+  cursor.x = macCursor.x; cursor.y = macCursor.y;
+  macCursor = null;
+  drawCursor();
+  followCursor();
+}
 const cursorEl = document.createElement('img');
 cursorEl.id = 'cursor';
 cursorEl.alt = '';
@@ -449,11 +504,13 @@ function predictRel(dx, dy) {
   lastLocalMove = performance.now();
   drawCursor();
   followCursor();
+  settleCursor();
 }
 function predictAbs(p) {
   cursor.x = p.x; cursor.y = p.y;
   lastLocalMove = performance.now();
   drawCursor();
+  settleCursor();
 }
 
 function baseScale() {
@@ -701,7 +758,14 @@ function endTouch(e) {
   g.active = false;
 }
 surface.addEventListener('touchend', endTouch, { passive: false });
-surface.addEventListener('touchcancel', endTouch, { passive: false });
+surface.addEventListener('touchcancel', (e) => {
+  e.preventDefault();
+  if (!g.active) return;
+  clearTimeout(g.longTimer);
+  if (g.mode === 'scroll') send({ t: 'scroll', dx: 0, dy: 0, ph: 'cancel' });
+  else if (g.mode === 'drag') send({ t: 'btn', b: 0, down: false, n: 1 });
+  g.active = false;
+}, { passive: false });
 document.addEventListener('gesturestart', (e) => e.preventDefault());
 
 // ---------- real mouse / trackpad (iPad with trackpad, laptops) ----------
@@ -757,7 +821,7 @@ function sendText(s) {
 
 // Physical keyboards (iPad Magic Keyboard, laptops) and special keys
 document.addEventListener('keydown', (e) => {
-  if (e.target.closest?.('#more')) return;   // typing in the panel
+  if (e.target.closest?.('#more, #unlock')) return;   // typing into our own panel or the unlock field
   const named = KEY_NAMES[e.key];
   const chord = e.metaKey || e.ctrlKey || e.altKey;
   const fromSoftKbd = e.target === kbd;

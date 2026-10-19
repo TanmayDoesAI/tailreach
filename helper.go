@@ -94,6 +94,7 @@ func (h *captureHelper) attach(sink func(byte, []byte)) (detach func()) {
 		if h.gen == gen {
 			h.sink = nil
 			h.scheduleIdle()
+			go h.send(map[string]any{"t": "release"}) // don't leave a button held down
 		}
 	}
 }
@@ -101,17 +102,19 @@ func (h *captureHelper) attach(sink func(byte, []byte)) (detach func()) {
 // scheduleIdle stops capturing a little after the viewer leaves, and ends the
 // process later still. Called with h.mu held.
 func (h *captureHelper) scheduleIdle() {
-	idle := func() bool { h.mu.Lock(); defer h.mu.Unlock(); return h.sink == nil }
-	h.stopT = time.AfterFunc(captureLinger, func() {
-		if idle() {
-			h.send(map[string]any{"t": "stop"})
+	// The check and the action happen under one lock, so a viewer attaching at that
+	// very moment can't have its fresh capture stopped or its helper killed.
+	whenIdle := func(f func()) func() {
+		return func() {
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			if h.sink == nil {
+				f()
+			}
 		}
-	})
-	h.killT = time.AfterFunc(helperLinger, func() {
-		if idle() {
-			h.kill()
-		}
-	})
+	}
+	h.stopT = time.AfterFunc(captureLinger, whenIdle(func() { h.send(map[string]any{"t": "stop"}) }))
+	h.killT = time.AfterFunc(helperLinger, whenIdle(h.kill))
 }
 
 func (h *captureHelper) kill() {

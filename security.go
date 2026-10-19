@@ -302,6 +302,7 @@ func (a *app) control(req map[string]any) map[string]any {
 		s.saveLocked()
 		s.mu.Unlock()
 		a.audit("password-changed", "this Mac", "")
+		stopAllSessions() // open streams re-check sign-in when they reconnect
 	case "enablePassword":
 		on, _ := req["enabled"].(bool)
 		s.mu.Lock()
@@ -313,6 +314,9 @@ func (a *app) control(req map[string]any) map[string]any {
 		s.saveLocked()
 		s.mu.Unlock()
 		a.audit("password-enabled", "this Mac", map[bool]string{true: "on", false: "off"}[on])
+		if on {
+			stopAllSessions()
+		}
 	case "keepAwake":
 		on, _ := req["enabled"].(bool)
 		s.mu.Lock()
@@ -333,6 +337,7 @@ func (a *app) control(req map[string]any) map[string]any {
 		s.saveLocked()
 		s.mu.Unlock()
 		a.audit("trust-revoked", "this Mac", id)
+		stopAllSessions() // open streams re-check sign-in when they reconnect
 	case "resetPasskeys":
 		if a.auth2 != nil {
 			a.auth2.mu.Lock()
@@ -342,6 +347,7 @@ func (a *app) control(req map[string]any) map[string]any {
 			a.auth2.mu.Unlock()
 		}
 		a.audit("passkeys-reset", "this Mac", "")
+		stopAllSessions() // open streams re-check sign-in when they reconnect
 	case "testSession":
 		// For local testing tools (tools/streamtest): a short session cookie. Only reachable
 		// through this owner-only socket, i.e. by someone already logged in to this Mac.

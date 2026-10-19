@@ -33,7 +33,7 @@ const (
 // Commands a browser may send through to the capture helper.
 var allowedCmds = map[string]bool{
 	"start": true, "kf": true, "abs": true, "rel": true, "btn": true, "click": true,
-	"scroll": true, "key": true, "text": true, "media": true, "clip-set": true, "clip-get": true, "diag": true,
+	"scroll": true, "key": true, "text": true, "media": true, "clip-set": true, "clip-get": true, "diag": true, "resend": true,
 }
 
 func helperPath() string {
@@ -61,6 +61,10 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "fast stream not available on this device", http.StatusNotImplemented)
 		return
 	}
+	if streamsBlocked() {
+		http.Error(w, "stopped on the Mac", http.StatusLocked)
+		return
+	}
 	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		OriginPatterns:  []string{"*." + a.domain},
 		CompressionMode: websocket.CompressionDisabled,
@@ -77,6 +81,7 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 	viewer := a.viewerName(r)
 	defer trackSession("stream", viewer, cancel, true)()
 	go func() { <-ctx.Done(); ws.CloseNow() }()
+	go a.watchAuth(ctx, r, cancel)
 
 	log.Printf("▶ stream started for %s", viewer)
 	a.audit("stream-start", viewer, "")
@@ -145,7 +150,10 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 			var ev struct{ T string }
 			if json.Unmarshal(buf[1:], &ev) == nil && ev.T == "stop-request" {
 				log.Printf("■ stopped from the Mac")
-				h.kill() // Stop pressed on the Mac's panel
+				a.audit("stopped-on-mac", viewer, "")
+				blockStreams(stopHold) // the viewer must not simply reconnect
+				h.kill()               // Stop pressed on the Mac's panel
+				ws.Close(closeStoppedOnMac, "stopped on the Mac")
 				cancel()
 				return
 			}
@@ -201,6 +209,31 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
+	// Four times a second: steer the encoder to what congestion control says the path
+	// carries (with headroom), so a sudden drop is followed within a frame or two.
+	go func() {
+		t := time.NewTicker(250 * time.Millisecond)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			}
+			s := viaRTC()
+			if s == nil {
+				continue
+			}
+			if t := int64(s.targetBitrate()) * 85 / 100; t > 0 {
+				t = min(max(t, minBitrate), maxBitrate.Load())
+				if d := t - bitrate.Load(); d > t/10 || -d > t/10 {
+					bitrate.Store(t)
+					toHelper(map[string]any{"t": "br", "bps": t})
+				}
+			}
+		}
+	}()
+
 	// Every second: report stats; after a calm stretch, nudge the bitrate back up.
 	go func() {
 		t := time.NewTicker(time.Second)
@@ -214,14 +247,6 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 			case <-t.C:
 			}
 			if s := viaRTC(); s != nil {
-				// Steer the encoder to what congestion control says the path carries (with headroom).
-				if t := int64(s.targetBitrate()) * 85 / 100; t > 0 {
-					t = min(max(t, minBitrate), maxBitrate.Load())
-					if d := t - bitrate.Load(); d > t/10 || -d > t/10 {
-						bitrate.Store(t)
-						toHelper(map[string]any{"t": "br", "bps": t})
-					}
-				}
 				sentBytes.Add(s.sentBytes.Swap(0))
 			} else if congested.Swap(false) {
 				calm = 0
@@ -340,4 +365,39 @@ func notify(title, body string) {
 	}
 	q := func(s string) string { return strings.NewReplacer(`\`, ``, `"`, ``).Replace(s) }
 	exec.Command("osascript", "-e", `display notification "`+q(body)+`" with title "mydevices" subtitle "`+q(title)+`"`).Start()
+}
+
+// Stop on the Mac's panel ends the session and refuses new ones for a while, so the
+// viewer can't just reconnect. The viewer is told why and stops retrying.
+const (
+	closeStoppedOnMac websocket.StatusCode = 4001
+	stopHold                               = 2 * time.Minute
+)
+
+var streamBlock atomic.Int64 // unix nanos until which new streams are refused
+
+func blockStreams(d time.Duration) { streamBlock.Store(time.Now().Add(d).UnixNano()) }
+func streamsBlocked() bool         { return time.Now().UnixNano() < streamBlock.Load() }
+
+// watchAuth re-checks the viewer's sign-in while a stream is open: a session that
+// expires, is signed out or revoked (or whose device trust is revoked) ends the stream.
+// Each check also counts as activity, so a long session in use doesn't idle out.
+func (a *app) watchAuth(ctx context.Context, r *http.Request, cancel func()) {
+	if a.auth2 == nil {
+		return // agent behind a hub: the hub signs viewers in
+	}
+	t := time.NewTicker(time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		if !a.passwordOK(r) || !a.auth2.valid(r) {
+			log.Printf("■ stream ended: sign-in no longer valid")
+			cancel()
+			return
+		}
+	}
 }

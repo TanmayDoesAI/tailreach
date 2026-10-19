@@ -240,6 +240,10 @@ func (a *app) auth(next http.Handler) http.Handler {
 // ---------- the screen relay ----------
 
 func (a *app) relayVNC(w http.ResponseWriter, r *http.Request) {
+	if streamsBlocked() {
+		http.Error(w, "stopped on the Mac", http.StatusLocked)
+		return
+	}
 	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		Subprotocols: []string{"binary"},
 		// Only pages served from this tailnet may open the socket.

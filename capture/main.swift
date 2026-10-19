@@ -189,7 +189,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         wanted = (maxW, maxH, fps, cursor)
         let p = [maxW, maxH, fps, cursor ? 1 : 0]
         if stream != nil, p == params {
-            q.async { self.enc.resendConfig() }
+            resendConfig()
             event(startedEvent)
             return
         }
@@ -288,8 +288,15 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         timer = t
     }
 
-    func requestKeyframe() { q.async { self.enc.forceKey = true } }
-    func resendConfig() { q.async { self.enc.resendConfig() } }
+    func requestKeyframe() { q.async { self.enc.forceKey = true; self.encodeNowIfIdle() } }
+    func resendConfig() { q.async { self.enc.resendConfig(); self.encodeNowIfIdle() } }
+
+    /// A still screen produces no frames; answer a keyframe request right away from the
+    /// last one instead of waiting for the refinement timer.
+    private func encodeNowIfIdle() {
+        guard let pb = lastPB, Date().timeIntervalSince(lastFrameAt) > 0.05 else { return }
+        enc.encode(pb, pts: CMClockGetTime(CMClockGetHostTimeClock()))
+    }
     func setBitrate(_ bps: Int) { q.async { self.enc.setBitrate(bps) } }
 }
 
@@ -335,6 +342,11 @@ final class Input {
         e?.flags = mods
         e?.post(tap: .cghidEventTap)
         down[b] = isDown
+    }
+
+    /// Lets go of any button still held (a viewer that left mid-drag).
+    func releaseAll() {
+        for b in 0..<3 where down[b] { button(b, down: false, clicks: 1, mods: []) }
     }
 
     /// Scrolls like a real trackpad: continuous pixel deltas tagged with a gesture phase
@@ -452,18 +464,22 @@ func handle(_ c: [String: Any]) {
             event(["t": "warn", "msg": "Accessibility permission is needed for mouse and keyboard control"])
         }
         Task {
+            inputQ.async { input.releaseAll() }
             await MainActor.run {
                 viewing = true
                 lockWatcher.reset()
+                cursorWatcher.reset()
                 panel.show(viewer: viewer) // shown before capture starts, so it can be left out of it
             }
             await capture.start(maxW: max(320, w), maxH: max(240, h), fps: (10...120).contains(fps) ? fps : 60, cursor: !localCursor)
         }
     case "stop":
+        inputQ.async { input.releaseAll() }
         Task {
             await capture.stop()
             await MainActor.run { viewing = false; panel.hide() }
         }
+    case "release": inputQ.async { input.releaseAll() }
     case "kf": capture.requestKeyframe()
     case "resend": capture.resendConfig()
     case "diag": event(["t": "diag", "accessibility": AXIsProcessTrusted(), "screen": CGPreflightScreenCaptureAccess()])
@@ -537,6 +553,9 @@ final class CursorWatcher {
         timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { [weak self] _ in self?.poll() }
         RunLoop.main.add(timer!, forMode: .common)
     }
+
+    /// Send position and shape again (a viewer just started).
+    func reset() { lastPos = CGPoint(x: -1, y: -1); lastShape = 0; tick = 14 }
 
     private func poll() {
         guard viewing else { return }
