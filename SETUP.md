@@ -130,6 +130,7 @@ This mints a short test session over the local control socket. Expect `webrtc: N
 | Video works, taps do nothing; viewer warns "Mac is blocking input" | Accessibility (step 8) |
 | Safari: "can't establish a secure connection" / loads forever | Phone's Tailscale is asleep or disconnected: toggle it off and on |
 | Passkey step does nothing | Use **Use password instead** |
+| Menu bar keeps showing "Unknown — Screen Recording" after viewing ended | A capture session left behind by an older build that force-killed the helper. `killall replayd` (it restarts on its own), then `killall ControlCenter` |
 | `path` is `relay …` | Works, just slower; check both devices' networks for UDP blocking |
 
 ## More computers (optional)
