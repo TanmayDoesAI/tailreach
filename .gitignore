@@ -2,3 +2,21 @@ dist/
 .DS_Store
 *.log
 /mydevices
+
+# Compiled binaries at repo root
+/mydevices-capture
+
+# Runtime state / secrets
+security.json
+trusted.json
+audit.log
+control.sock
+hub-id
+*.state
+tailscaled.*
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+.env
