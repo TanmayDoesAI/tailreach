@@ -6,55 +6,71 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="My Devices">
-  <meta name="theme-color" content="#0b0d12">
-  <title>Sign in · My Devices</title>
+  <meta name="apple-mobile-web-app-title" content="Devices">
+  <meta name="theme-color" content="#000000">
+  <title>Sign in</title>
   <style>
-    :root { --bg:#0b0d12; --card:#161921; --line:rgba(255,255,255,.08); --text:#e9ecf2; --muted:#8b93a7; --accent:#4f8cff; --bad:#ff453a; color-scheme: dark; }
-    * { box-sizing: border-box; }
-    body { margin:0; min-height:100vh; display:grid; place-items:center; padding:24px 16px;
-      background:var(--bg); color:var(--text); font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif; }
-    main { width:min(380px,100%); display:flex; flex-direction:column; gap:14px; text-align:center; }
-    .lock { width:64px; height:64px; margin:0 auto 4px; border-radius:20px; display:grid; place-items:center;
-      background:rgba(79,140,255,.12); color:var(--accent); }
-    h1 { margin:0; font-size:24px; letter-spacing:-.02em; }
-    p { margin:0; color:var(--muted); }
-    button, input { font:inherit; font-size:17px; border-radius:14px; min-height:52px; width:100%; }
-    button { border:0; background:var(--accent); color:#fff; font-weight:600; cursor:pointer; }
-    button.ghost { background:none; color:var(--accent); font-weight:500; min-height:40px; }
-    input { text-align:center; letter-spacing:.4em; background:var(--card); color:var(--text); border:1px solid var(--line); padding:0 12px; }
-    .err { color:var(--bad); min-height:1.4em; }
-    .hidden { display:none !important; }
+    :root {
+      --bg: #000; --fill: rgba(120,120,128,.16); --text: #f5f5f7; --text-2: rgba(235,235,245,.6);
+      --accent: #0a84ff; --red: #ff453a; color-scheme: dark;
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    body {
+      margin: 0; min-height: 100vh; min-height: 100dvh; display: grid; place-items: center;
+      padding: 24px 24px calc(24px + env(safe-area-inset-bottom));
+      background: var(--bg); color: var(--text);
+      font: 17px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    main { width: min(340px, 100%); display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; }
+    .glyph { color: var(--text-2); margin-bottom: 12px; }
+    .glyph svg { width: 34px; height: 34px; }
+    h1 { margin: 0; font-size: 28px; font-weight: 700; letter-spacing: -.02em; }
+    #who { margin: 0 0 28px; font-size: 15px; color: var(--text-2); }
+    section, form { width: 100%; display: flex; flex-direction: column; gap: 10px; }
+    p.note { margin: 0 0 6px; font-size: 15px; color: var(--text-2); }
+    input {
+      width: 100%; height: 50px; padding: 0 16px; border: 0; border-radius: 12px; outline: none;
+      background: var(--fill); color: var(--text); font: inherit; font-size: 17px; text-align: center;
+    }
+    input#code { letter-spacing: .5em; font-variant-numeric: tabular-nums; }
+    input::placeholder { color: rgba(235,235,245,.3); letter-spacing: normal; }
+    button {
+      width: 100%; height: 50px; border: 0; border-radius: 12px; cursor: pointer;
+      background: var(--accent); color: #fff; font: inherit; font-size: 17px; font-weight: 600;
+    }
+    button:active { opacity: .85; }
+    button.quiet { height: 40px; background: none; color: var(--accent); font-weight: 400; font-size: 15px; }
+    .err { margin: 8px 0 0; min-height: 20px; font-size: 14px; color: var(--red); }
+    .hidden { display: none !important; }
   </style>
 </head>
 <body>
 <main>
-  <div class="lock">
-    <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
-  </div>
-  <h1>My Devices</h1>
-  <p id="who"></p>
+  <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8.5 10.5V7.5a3.5 3.5 0 0 1 7 0v3"/></svg></span>
+  <h1>Devices</h1>
+  <p id="who">&nbsp;</p>
 
   <!-- Device password: once every 30 days per device -->
-  <form id="password" class="hidden" style="display:flex;flex-direction:column;gap:12px">
-    <p>Enter the device password. This device will be remembered for 30 days.</p>
-    <input id="pw" type="password" autocomplete="current-password" placeholder="Password" style="letter-spacing:normal">
+  <form id="password" class="hidden">
+    <input id="pw" type="password" autocomplete="current-password" placeholder="Password">
     <button type="submit">Continue</button>
+    <p class="note" style="margin-top:6px">This device will be remembered for 30 days.</p>
   </form>
 
   <!-- Returning device -->
   <section id="signin" class="hidden">
-    <button id="signinBtn">Unlock with passkey</button>
-    <button id="addBtn" class="ghost">This is a new phone or tablet</button>
+    <button id="signinBtn">Continue with passkey</button>
+    <button id="addBtn" class="quiet">Use a new device</button>
   </section>
 
-  <!-- New device: pairing code shown on the Mac -->
-  <section id="pair" class="hidden" style="display:flex;flex-direction:column;gap:12px">
-    <p id="pairHint">To add this device, get a code shown on your Mac.</p>
-    <button id="codeBtn">Show code on my Mac</button>
-    <input id="code" class="hidden" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000">
+  <!-- New device -->
+  <section id="pair" class="hidden">
+    <p class="note" id="pairHint">Get a one-time code on your Mac to add this device.</p>
+    <button id="codeBtn">Send code to Mac</button>
+    <input id="code" class="hidden" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="Code">
     <button id="registerBtn" class="hidden">Create passkey</button>
-    <button id="backBtn" class="ghost hidden">I already have a passkey</button>
+    <button id="backBtn" class="quiet hidden">I already have a passkey</button>
   </section>
 
   <p class="err" id="err"></p>
@@ -121,10 +137,10 @@
   $('#codeBtn').onclick = async () => {
     try {
       await post('auth/pair');
-      $('#pairHint').textContent = 'Enter the 6-digit code from the notification on your Mac.';
+      $('#pairHint').textContent = 'Enter the code from the notification on your Mac.';
       $('#code').classList.remove('hidden');
       $('#registerBtn').classList.remove('hidden');
-      $('#codeBtn').textContent = 'Send a new code';
+      $('#codeBtn').textContent = 'Send new code'; $('#codeBtn').className = 'quiet';
       $('#code').focus();
     } catch (e) { fail(e); }
   };

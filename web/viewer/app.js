@@ -76,7 +76,7 @@ async function boot() {
 
 function connect() {
   if (ws) return;
-  setState('connecting', retry ? 'Reconnecting…' : 'Connecting…');
+  setState('connecting', retry ? 'Reconnecting' : 'Connecting');
   const url = new URL('stream', location.href);
   url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   ws = new WebSocket(url);
@@ -94,7 +94,7 @@ function connect() {
     ws = null;
     resetDecoder();
     if (document.visibilityState === 'visible') {
-      setState('connecting', 'Reconnecting…');
+      setState('connecting', 'Reconnecting');
       setTimeout(connect, Math.min(5000, 300 * 2 ** retry++));
     }
   };
@@ -210,7 +210,8 @@ setInterval(() => {
   send({ t: 'ping', at: performance.now() });
   stats.fps = stats.frames; stats.frames = 0;
   if (document.body.dataset.state === 'on') {
-    $('#statusText').textContent = `${stats.rtt} ms · ${stats.fps} fps · ${(stats.kbps / 1000).toFixed(1)} Mbps`;
+    $('#statusText').textContent = `${stats.rtt} ms`;
+    $('#status').title = `${stats.fps} fps · ${(stats.kbps / 1000).toFixed(1)} Mbps`;
   }
 }, 1000);
 
@@ -668,23 +669,41 @@ function resetPageZoom() {
 window.visualViewport?.addEventListener('resize', () => setTimeout(resetPageZoom, 300));
 
 // ---------- icons ----------
+// One line-icon set (24px grid, 1.75 stroke), injected wherever data-icon is set.
 const ICON_PATHS = {
-  mission: '<rect x="3" y="4" width="7" height="6" rx="1.5"/><rect x="14" y="4" width="7" height="6" rx="1.5"/><rect x="3" y="14" width="7" height="6" rx="1.5"/><rect x="14" y="14" width="7" height="6" rx="1.5"/>',
-  search:  '<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/>',
-  switch:  '<rect x="3" y="6" width="13" height="12" rx="2"/><path d="M8 3h11a2 2 0 0 1 2 2v11"/>',
-  desktop: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
-  left:    '<path d="M15 5l-7 7 7 7"/>',
-  right:   '<path d="M9 5l7 7-7 7"/>',
-  camera:  '<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>',
-  stop:    '<circle cx="12" cy="12" r="9"/><path d="M8.5 8.5l7 7M15.5 8.5l-7 7"/>',
-  paste:   '<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 11h6M9 15h4"/>',
-  copy:    '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>',
-  lock:    '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
-  grid:    '<rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/>',
+  keyboard:     '<rect x="2.5" y="6" width="19" height="12" rx="2.5"/><path d="M6.5 10h.01M10 10h.01M14 10h.01M17.5 10h.01M8 14h8"/>',
+  trackpad:     '<rect x="3.5" y="4" width="17" height="16" rx="3"/><path d="M3.5 15.5h17M12 15.5V20"/>',
+  touch:        '<path d="M9 11.5V5.5a1.5 1.5 0 0 1 3 0V11m0-1.5a1.5 1.5 0 0 1 3 0V11m0-.5a1.5 1.5 0 0 1 3 0V15a6 6 0 0 1-6 6h-.6a6 6 0 0 1-4.6-2.2L4.5 15.6a1.5 1.5 0 0 1 2.3-1.9L9 16"/>',
+  more:         '<circle cx="5.5" cy="12" r="1.2" fill="currentColor"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/><circle cx="18.5" cy="12" r="1.2" fill="currentColor"/>',
+  arrowLeft:    '<path d="M19 12H5M11 6l-6 6 6 6"/>',
+  arrowRight:   '<path d="M5 12h14M13 6l6 6-6 6"/>',
+  arrowUp:      '<path d="M12 19V5M6 11l6-6 6 6"/>',
+  arrowDown:    '<path d="M12 5v14M6 13l6 6 6-6"/>',
+  chevronLeft:  '<path d="M14.5 5.5L8 12l6.5 6.5"/>',
+  chevronRight: '<path d="M9.5 5.5L16 12l-6.5 6.5"/>',
+  mission:      '<rect x="3" y="4.5" width="7.5" height="6" rx="1.5"/><rect x="13.5" y="4.5" width="7.5" height="6" rx="1.5"/><rect x="3" y="13.5" width="7.5" height="6" rx="1.5"/><rect x="13.5" y="13.5" width="7.5" height="6" rx="1.5"/>',
+  search:       '<circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5"/>',
+  apps:         '<rect x="3" y="7" width="12" height="11" rx="2"/><path d="M8 4h11a2 2 0 0 1 2 2v9"/>',
+  desktop:      '<rect x="2.5" y="4" width="19" height="13" rx="2"/><path d="M8 20.5h8"/>',
+  camera:       '<path d="M3.5 8.5A1.5 1.5 0 0 1 5 7h2.2l1.6-2.2h6.4L16.8 7H19a1.5 1.5 0 0 1 1.5 1.5V18A1.5 1.5 0 0 1 19 19.5H5A1.5 1.5 0 0 1 3.5 18z"/><circle cx="12" cy="13" r="3.5"/>',
+  xCircle:      '<circle cx="12" cy="12" r="8.5"/><path d="M9 9l6 6M15 9l-6 6"/>',
+  paste:        '<rect x="5" y="4.5" width="14" height="16" rx="2"/><path d="M9 4.5V3.5h6v1"/>',
+  copy:         '<rect x="8.5" y="8.5" width="11.5" height="11.5" rx="2"/><path d="M15.5 8.5V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7.5a2 2 0 0 0 2 2h2.5"/>',
+  lock:         '<rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8.5 10.5V7.5a3.5 3.5 0 0 1 7 0v3"/>',
+  prev:         '<path d="M18 6.5v11L10 12zM6 6v12"/>',
+  play:         '<path d="M5 6v12l7-6zM15 6.5v11M19 6.5v11"/>',
+  next:         '<path d="M6 6.5v11l8-5.5zM18 6v12"/>',
+  volDown:      '<path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4zM16 10a3 3 0 0 1 0 4"/>',
+  volUp:        '<path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4zM15.5 9.5a3.5 3.5 0 0 1 0 5M18 7a7 7 0 0 1 0 10"/>',
+  mute:         '<path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4zM16 10l4 4M20 10l-4 4"/>',
+  sunDim:       '<circle cx="12" cy="12" r="3.5"/><path d="M12 5.5v.01M12 18.5v.01M5.5 12h.01M18.5 12h.01M7.4 7.4h.01M16.6 16.6h.01M7.4 16.6h.01M16.6 7.4h.01"/>',
+  sun:          '<circle cx="12" cy="12" r="3.5"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6L7 7M17 17l1.4 1.4M5.6 18.4L7 17M17 7l1.4-1.4"/>',
+  x:            '<path d="M7 7l10 10M17 7L7 17"/>',
 };
-document.querySelectorAll('[data-icon]').forEach((el) => {
-  el.insertAdjacentHTML('afterbegin', `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICON_PATHS[el.dataset.icon] || ''}</svg>`);
-});
+function icon(name) {
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON_PATHS[name] || ''}</svg>`;
+}
+document.querySelectorAll('[data-icon]').forEach((el) => el.insertAdjacentHTML('afterbegin', icon(el.dataset.icon)));
 
 // ---------- clipboard ----------
 // iOS only lets a page write the clipboard during a tap, so Mac → phone goes through
@@ -766,13 +785,14 @@ function setMode(m) {
   settings.mode = m;
   store.set('mode', m);
   document.body.dataset.mode = m;
-  $('#modeBtn').textContent = m === 'trackpad' ? '◎' : '☝︎';
-  $('#modeSeg').textContent = m === 'trackpad' ? 'Trackpad' : 'Touch';
+  $('#modeBtn').innerHTML = icon(m === 'trackpad' ? 'trackpad' : 'touch');
+  markSegments();
 }
 
 function openSheet(open) {
   $('#more').classList.toggle('hidden', !open);
   $('#backdrop').classList.toggle('hidden', !open);
+  document.body.classList.toggle('sheet-open', open);
   if (open) kbd.blur();
   else resetPageZoom();
 }
@@ -801,12 +821,24 @@ document.querySelectorAll('#bar button, #keys button').forEach((b) => b.addEvent
 $('#status').addEventListener('click', () => document.body.classList.toggle('bar-hidden'));
 
 // Settings
-$('#quality').value = settings.quality;
-$('#fps').value = String(settings.fps);
+// Segmented controls: <button data-set="quality" data-value="auto">
+function markSegments() {
+  document.querySelectorAll('[data-set]').forEach((b) =>
+    b.classList.toggle('on', String(settings[b.dataset.set]) === b.dataset.value));
+}
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-set]');
+  if (!b) return;
+  const key = b.dataset.set, v = b.dataset.value;
+  if (key === 'mode') return setMode(v);
+  if (String(settings[key]) === v) return;
+  settings[key] = key === 'fps' ? +v : v;
+  store.set(key, settings[key]);
+  markSegments();
+  ws?.close();   // reconnect with the new stream settings
+});
 $('#speed').value = settings.speed;
 $('#natural').checked = settings.natural;
-$('#quality').addEventListener('change', (e) => { settings.quality = e.target.value; store.set('quality', settings.quality); ws?.close(); });
-$('#fps').addEventListener('change', (e) => { settings.fps = +e.target.value; store.set('fps', settings.fps); ws?.close(); });
 $('#speed').addEventListener('input', (e) => { settings.speed = +e.target.value; store.set('speed', settings.speed); });
 $('#natural').addEventListener('change', (e) => { settings.natural = e.target.checked; store.set('natural', settings.natural); });
 

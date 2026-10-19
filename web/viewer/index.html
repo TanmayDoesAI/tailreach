@@ -10,140 +10,142 @@
   <meta name="theme-color" content="#000000">
   <link rel="apple-touch-icon" href="novnc/app/images/icons/novnc-ios-180.png">
   <link rel="stylesheet" href="app.css">
-  <title>Mac Remote</title>
+  <title>Mac</title>
 </head>
 <body data-state="off" data-mode="trackpad">
-  <!-- The remote screen. app.js pans/zooms it with a CSS transform. -->
   <canvas id="screen"></canvas>
-  <!-- Catches all touch / mouse input on top of the screen -->
   <div id="surface"></div>
 
+  <!-- Connecting / error -->
   <div id="splash">
-    <div class="spinner"></div>
-    <p id="splashText">Connecting…</p>
+    <div class="loader"></div>
+    <p id="splashText">Connecting</p>
     <a id="splashAction" class="hidden"></a>
   </div>
 
-  <!-- Shown while the Mac is locked: your password is typed into the real lock screen -->
-  <form id="unlock" class="sheet hidden" autocomplete="on">
-    <div class="lockIcon">
-      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
-    </div>
-    <h1>Mac is locked</h1>
-    <p class="muted">Enter the Mac password for <b id="macUser"></b> to unlock it.</p>
+  <!-- Locked Mac: the password is typed into the real lock screen -->
+  <form id="unlock" class="card hidden" autocomplete="on">
+    <span class="glyph" data-icon="lock"></span>
+    <h1>Locked</h1>
+    <p class="sub">Enter the password for <span id="macUser"></span></p>
     <input id="macUserField" name="username" autocomplete="username" class="hidden">
-    <input id="macPw" name="password" type="password" autocomplete="current-password" placeholder="Mac password">
+    <input id="macPw" name="password" type="password" autocomplete="current-password" placeholder="Password">
     <button type="submit" class="primary" id="unlockBtn">Unlock</button>
-    <p class="err" id="unlockErr"></p>
-    <a class="muted" href="classic/">Show the lock screen instead</a>
+    <p class="error" id="unlockErr"></p>
+    <a class="quiet" href="classic/">Show lock screen</a>
   </form>
 
-  <!-- Status pill: tap to hide / show the toolbar -->
-  <button id="status" class="pill"><span class="dot"></span><span id="statusText">Connecting</span></button>
+  <!-- Connection status: tap to hide the controls -->
+  <button id="status"><span class="dot"></span><span id="statusText"></span></button>
 
-  <nav id="bar">
-    <button data-act="keyboard" title="Keyboard">⌨︎</button>
-    <button data-act="mode" id="modeBtn" title="Trackpad / touch">◎</button>
-    <button data-mod="cmd">⌘</button>
-    <button data-mod="opt">⌥</button>
-    <button data-mod="ctrl">⌃</button>
-    <button data-mod="shift">⇧</button>
-    <button data-key="esc">esc</button>
-    <button data-act="more" title="More">⋯</button>
+  <!-- Space arrows: in the side margins when there's room -->
+  <button id="spacePrev" class="space" data-combo="ctrl+left" data-icon="chevronLeft" aria-label="Previous Space"></button>
+  <button id="spaceNext" class="space" data-combo="ctrl+right" data-icon="chevronRight" aria-label="Next Space"></button>
+
+  <!-- Toolbar -->
+  <nav id="bar" class="capsule">
+    <button data-act="keyboard" data-icon="keyboard" aria-label="Keyboard"></button>
+    <button data-act="mode" id="modeBtn" data-icon="trackpad" aria-label="Trackpad or touch"></button>
+    <span class="sep"></span>
+    <button data-mod="cmd" class="key">⌘</button>
+    <button data-mod="opt" class="key">⌥</button>
+    <button data-mod="ctrl" class="key">⌃</button>
+    <button data-mod="shift" class="key">⇧</button>
+    <span class="sep"></span>
+    <button data-key="esc" class="key text">esc</button>
+    <button data-act="more" data-icon="more" aria-label="More"></button>
   </nav>
 
-  <nav id="keys">
-    <button data-key="left">←</button>
-    <button data-key="up">↑</button>
-    <button data-key="down">↓</button>
-    <button data-key="right">→</button>
-    <button data-key="tab">⇥</button>
-    <button data-combo="cmd+c">⌘C</button>
-    <button data-combo="cmd+v">⌘V</button>
-    <button data-combo="cmd+z">⌘Z</button>
-    <button data-combo="cmd+a">⌘A</button>
-    <button data-combo="cmd+tab">⌘⇥</button>
-    <button data-combo="cmd+space">⌘␣</button>
+  <!-- Extra keys, shown with the keyboard -->
+  <nav id="keys" class="capsule">
+    <button data-key="tab" class="key text">tab</button>
+    <button data-key="left" data-icon="arrowLeft" aria-label="Left"></button>
+    <button data-key="up" data-icon="arrowUp" aria-label="Up"></button>
+    <button data-key="down" data-icon="arrowDown" aria-label="Down"></button>
+    <button data-key="right" data-icon="arrowRight" aria-label="Right"></button>
+    <span class="sep"></span>
+    <button data-combo="cmd+c" class="key text">⌘C</button>
+    <button data-combo="cmd+v" class="key text">⌘V</button>
+    <button data-combo="cmd+z" class="key text">⌘Z</button>
+    <button data-combo="cmd+a" class="key text">⌘A</button>
   </nav>
 
-  <!-- Switch Spaces / full-screen apps. Sits in the empty side margins when there is room. -->
-  <button id="spacePrev" class="spaceArrow" data-combo="ctrl+left" aria-label="Previous Space">‹</button>
-  <button id="spaceNext" class="spaceArrow" data-combo="ctrl+right" aria-label="Next Space">›</button>
-
-  <!-- "More" bottom sheet. Tap outside to close; actions close it so you see the result. -->
+  <!-- More -->
   <div id="backdrop" class="hidden" data-act="close"></div>
   <section id="more" class="hidden" aria-label="More">
     <div class="grabber" data-act="close"></div>
 
-    <h2>Mac</h2>
-    <div class="tiles">
+    <div class="actions">
       <button data-combo="ctrl+up" data-icon="mission" data-close>Mission Control</button>
       <button data-combo="cmd+space" data-icon="search" data-close>Spotlight</button>
-      <button data-combo="cmd+tab" data-icon="switch" data-close>App Switcher</button>
+      <button data-combo="cmd+tab" data-icon="apps" data-close>Switch App</button>
       <button data-key="f11" data-icon="desktop" data-close>Desktop</button>
-      <button data-combo="ctrl+left" data-icon="left" data-close>Prev Space</button>
-      <button data-combo="ctrl+right" data-icon="right" data-close>Next Space</button>
       <button data-combo="cmd+shift+3" data-icon="camera" data-close>Screenshot</button>
-      <button data-combo="cmd+opt+esc" data-icon="stop" data-close>Force Quit</button>
+      <button data-combo="cmd+opt+esc" data-icon="xCircle" data-close>Force Quit</button>
+      <button data-act="pasteToMac" data-icon="paste">Paste</button>
+      <button data-act="copyFromMac" data-icon="copy">Copy</button>
     </div>
 
-    <h2>Media</h2>
-    <div class="pills">
-      <button data-media="prev" aria-label="Previous">⏮</button>
-      <button data-media="play" aria-label="Play / pause">⏯</button>
-      <button data-media="next" aria-label="Next">⏭</button>
-      <button data-media="voldown" aria-label="Volume down">🔉</button>
-      <button data-media="volup" aria-label="Volume up">🔊</button>
-      <button data-media="mute" aria-label="Mute">🔇</button>
-      <button data-media="brdown" aria-label="Brightness down">🔅</button>
-      <button data-media="brup" aria-label="Brightness up">🔆</button>
+    <div class="media">
+      <button data-media="prev" data-icon="prev" aria-label="Previous"></button>
+      <button data-media="play" data-icon="play" aria-label="Play or pause"></button>
+      <button data-media="next" data-icon="next" aria-label="Next"></button>
+      <span class="sep"></span>
+      <button data-media="voldown" data-icon="volDown" aria-label="Volume down"></button>
+      <button data-media="volup" data-icon="volUp" aria-label="Volume up"></button>
+      <button data-media="mute" data-icon="mute" aria-label="Mute"></button>
+      <span class="sep"></span>
+      <button data-media="brdown" data-icon="sunDim" aria-label="Brightness down"></button>
+      <button data-media="brup" data-icon="sun" aria-label="Brightness up"></button>
     </div>
 
-    <h2>Clipboard</h2>
-    <div class="two">
-      <button data-act="pasteToMac" data-icon="paste">Paste on Mac</button>
-      <button data-act="copyFromMac" data-icon="copy">Copy from Mac</button>
-    </div>
-    <details class="clip">
-      <summary>Type or send text…</summary>
-      <textarea id="clipText" placeholder="Text for the Mac"></textarea>
-      <div class="two">
-        <button data-act="typeText">Type it</button>
-        <button data-act="sendClip">Put on clipboard</button>
+    <div class="group">
+      <div class="item">
+        <span>View</span>
+        <div class="seg"><button data-act="fit" data-close>Fit</button><button data-act="fillScreen" data-close>Fill</button></div>
       </div>
-    </details>
-
-    <h2>View</h2>
-    <div class="seg" id="fitSeg">
-      <button data-act="fit" data-close>Fit</button>
-      <button data-act="fillScreen" data-close>Fill</button>
-      <button data-act="mode" id="modeSeg">Trackpad</button>
-    </div>
-    <div class="rows">
-      <label class="row">Quality
-        <select id="quality">
-          <option value="saver">Data saver</option>
-          <option value="auto">Auto</option>
-          <option value="crisp">Crisp</option>
-        </select>
+      <div class="item">
+        <span>Input</span>
+        <div class="seg"><button data-set="mode" data-value="trackpad">Trackpad</button><button data-set="mode" data-value="touch">Touch</button></div>
+      </div>
+      <div class="item">
+        <span>Quality</span>
+        <div class="seg"><button data-set="quality" data-value="saver">Saver</button><button data-set="quality" data-value="auto">Auto</button><button data-set="quality" data-value="crisp">Crisp</button></div>
+      </div>
+      <div class="item">
+        <span>Frame rate</span>
+        <div class="seg"><button data-set="fps" data-value="30">30</button><button data-set="fps" data-value="60">60</button></div>
+      </div>
+      <label class="item">
+        <span>Pointer speed</span>
+        <input id="speed" type="range" min="0.5" max="3" step="0.1">
       </label>
-      <label class="row">Frame rate
-        <select id="fps"><option value="30">30 fps</option><option value="60">60 fps</option></select>
+      <label class="item">
+        <span>Natural scrolling</span>
+        <input id="natural" type="checkbox" class="switch">
       </label>
-      <label class="row">Pointer speed <input id="speed" type="range" min="0.5" max="3" step="0.1"></label>
-      <label class="row">Natural scrolling <input id="natural" type="checkbox"></label>
     </div>
 
-    <div class="two footer">
-      <button data-combo="ctrl+cmd+q" data-icon="lock" data-close>Lock Mac</button>
-      <a class="btn" href="../" data-icon="grid">All devices</a>
+    <div class="group">
+      <textarea id="clipText" rows="2" placeholder="Type text to send"></textarea>
+      <div class="item buttons">
+        <button data-act="typeText">Type on Mac</button>
+        <button data-act="sendClip">Copy to Mac</button>
+      </div>
+    </div>
+
+    <div class="group">
+      <button class="item link" data-combo="ctrl+cmd+q" data-close>Lock Mac</button>
+      <a class="item link" href="../">All devices</a>
     </div>
   </section>
 
-  <!-- Shown when something is copied on the Mac -->
-  <div id="toast" class="hidden"><span id="toastText"></span><button data-act="toastCopy">Copy</button><button data-act="toastClose" class="x">✕</button></div>
+  <div id="toast" class="capsule hidden">
+    <span id="toastText"></span>
+    <button data-act="toastCopy" class="text">Copy</button>
+    <button data-act="toastClose" data-icon="x" aria-label="Dismiss"></button>
+  </div>
 
-  <!-- Hidden input that brings up the on-screen keyboard -->
   <textarea id="kbd" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false"></textarea>
 
   <script src="app.js"></script>
