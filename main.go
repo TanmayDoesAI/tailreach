@@ -4,8 +4,8 @@
 // tsnet, so no separate Tailscale setup is needed) and relays the browser's
 // WebSocket to the local VNC server (macOS Screen Sharing by default).
 //
-// One machine runs with --hub: it joins as "mydevices" and serves a dashboard of
-// every device at https://mydevices.<tailnet>.ts.net/, with each device at /<name>/.
+// One machine runs with --hub: it joins as "devices" and serves a dashboard of every
+// device at https://devices.<tailnet>.ts.net/ (or just devices/), each at /<name>/.
 package main
 
 import (
@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"mime"
 	"net"
 	"net/netip"
 	"net/http"
@@ -52,6 +53,7 @@ type options struct {
 
 func main() {
 	log.SetFlags(log.Ltime)
+	mime.AddExtensionType(".webmanifest", "application/manifest+json")
 
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
@@ -76,12 +78,12 @@ func main() {
 	var o options
 	flag.StringVar(&o.name, "name", defaultName(), "name of this device in links, e.g. mac → /mac/")
 	flag.BoolVar(&o.hub, "hub", false, "also serve the dashboard of all devices")
-	flag.StringVar(&o.hubName, "hub-name", "mydevices", "tailnet hostname for the hub")
+	flag.StringVar(&o.hubName, "hub-name", "devices", "tailnet hostname for the hub: https://<hub-name>.<tailnet>.ts.net, or just type <hub-name>/ in a browser on your tailnet")
 	flag.StringVar(&o.vncAddr, "vnc", "127.0.0.1:5900", "local VNC server to expose")
 	flag.StringVar(&o.stateDir, "state", defaultStateDir(), "where Tailscale state is kept")
 	flag.StringVar(&o.webDir, "web-dir", "", "serve the web UI from this folder instead of the built-in copy (for hacking on the UI)")
 	flag.StringVar(&o.allow, "allow", "", "extra Tailscale logins allowed in, comma-separated (default: only the owner)")
-	flag.StringVar(&o.via, "via", "mydevices", "devices: only accept connections through this hub (\"\" = standalone, with its own Face ID login)")
+	flag.StringVar(&o.via, "via", "devices", "devices: only accept connections through this hub (\"\" = standalone, with its own Face ID login)")
 	flag.BoolVar(&o.verbose, "v", false, "verbose Tailscale logs")
 	flag.Usage = usage
 	flag.Parse()
@@ -95,15 +97,17 @@ func main() {
 
 func run(o options) error {
 	hostname := o.name
+	stateName := o.name
 	if o.hub {
 		hostname = sanitizeName(o.hubName)
+		stateName = "mydevices" // the hub's state dir keeps its name, so renaming the hub keeps its Tailscale login
 		o.via = ""
 	}
 	o.via = sanitizeName(o.via)
 
 	srv := &tsnet.Server{
 		Hostname: hostname,
-		Dir:      filepath.Join(o.stateDir, hostname),
+		Dir:      filepath.Join(o.stateDir, stateName),
 		AuthKey:  os.Getenv("TS_AUTHKEY"),
 		Logf:     func(string, ...any) {},
 		UserLogf: func(format string, args ...any) {}, // the login URL is printed by watchLogin instead
@@ -157,11 +161,11 @@ func run(o options) error {
 			a.allow[l] = true
 		}
 	}
-	a.sec = newSecurity(filepath.Join(o.stateDir, hostname))
+	a.sec = newSecurity(filepath.Join(o.stateDir, stateName))
 	a.sec.applyKeepAwake()
 	go a.serveControl()
 	if o.hub || o.via == "" {
-		if a.auth2, err = newAuth(a.selfDNS, filepath.Join(o.stateDir, hostname), a.owner); err != nil {
+		if a.auth2, err = newAuth(a.selfDNS, filepath.Join(o.stateDir, stateName), a.owner); err != nil {
 			return err
 		}
 	}
@@ -199,7 +203,7 @@ func run(o options) error {
 	base := "https://" + a.selfDNS
 	log.Printf("✓ Signed in as %s on %s", a.owner, st.CurrentTailnet.Name)
 	if o.hub {
-		log.Printf("✓ Dashboard:  %s/", base)
+		log.Printf("✓ Dashboard:  %s/   (or type %s/ in a browser on your tailnet)", base, hostname)
 		log.Printf("✓ This Mac:   %s/%s/", base, o.name)
 	} else {
 		log.Printf("✓ This device: %s/", base)
@@ -233,7 +237,7 @@ func usage() {
 
 Usage:
   mydevices [flags]              run on this machine (prints a login link the first time)
-  mydevices --hub [flags]        also serve the dashboard at https://mydevices.<tailnet>.ts.net/
+  mydevices --hub [flags]        also serve the dashboard at https://devices.<tailnet>.ts.net/
   mydevices install [flags]      start automatically at login (macOS), same flags as above
   mydevices uninstall            stop and remove the login item
   mydevices settings             open the settings window on this Mac (password, trusted devices, sessions)

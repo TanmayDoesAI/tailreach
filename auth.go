@@ -38,6 +38,7 @@ const (
 )
 
 type passkeyUser struct {
+	RPID  string                `json:"rpID"` // passkeys only work on the address they were made for
 	ID    []byte                `json:"id"`
 	Name  string                `json:"name"`
 	Creds []webauthn.Credential `json:"creds"`
@@ -85,6 +86,15 @@ func newAuth(host, stateDir, owner string) (*authState, error) {
 	}
 	if s.user == nil {
 		s.user = &passkeyUser{ID: randBytes(32), Name: owner}
+	}
+	if s.user.RPID != host {
+		// The hub's address changed (e.g. it was renamed): passkeys made for the old
+		// address can't sign in here, so start fresh. Devices re-add theirs after the password.
+		if len(s.user.Creds) > 0 {
+			log.Printf("Hub address is now %s: passkeys for the old address were cleared", host)
+		}
+		s.user.RPID, s.user.Creds = host, nil
+		s.save()
 	}
 	return s, nil
 }
@@ -171,7 +181,7 @@ func (a *app) authRoutes(mux *http.ServeMux) {
 func (a *app) requireSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
-		if p == "/login" || strings.HasPrefix(p, "/auth/") || strings.HasPrefix(p, "/.well-known/") || (a.passwordOK(r) && a.auth2.valid(r)) {
+		if p == "/login" || p == "/manifest.webmanifest" || strings.HasPrefix(p, "/icons/") || strings.HasPrefix(p, "/auth/") || strings.HasPrefix(p, "/.well-known/") || (a.passwordOK(r) && a.auth2.valid(r)) {
 			next.ServeHTTP(w, r)
 			return
 		}

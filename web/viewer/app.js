@@ -218,7 +218,8 @@ async function startRTC() {
       try { e.receiver.playoutDelayHint = 0; } catch {}
       video.srcObject = new MediaStream([e.track]);
       video.play().catch(() => {});
-      video.requestVideoFrameCallback?.(onVideoFrame);
+      if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(onVideoFrame);
+      else watchVideo();   // Firefox: no per-frame callback, so poll playback instead
     };
     pc.onconnectionstatechange = () => {
       if (pc && ['failed', 'closed'].includes(pc.connectionState)) fallbackToWS();
@@ -257,9 +258,26 @@ function stopRTC(tellServer) {
   document.body.classList.remove('rtc');
 }
 
-function onVideoFrame(now, meta) {
+// Browsers without requestVideoFrameCallback: detect the first frame and count frames by polling.
+function watchVideo() {
+  let seen = 0;
+  const tick = () => {
+    if (!video.srcObject) return;
+    const q = video.getVideoPlaybackQuality?.();
+    const total = q ? q.totalVideoFrames : (video.readyState >= 2 ? seen + 1 : seen);
+    if (total > seen && video.videoWidth) {
+      stats.frames += total - seen;
+      seen = total;
+      onVideoFrame(0, { width: video.videoWidth, height: video.videoHeight }, true);
+    }
+    setTimeout(tick, 100);
+  };
+  tick();
+}
+
+function onVideoFrame(now, meta, polled) {
   if (!video.srcObject) return;
-  stats.frames++;
+  if (!polled) stats.frames++;
   if (canvas.width !== meta.width || canvas.height !== meta.height) {
     canvas.width = meta.width;   // canvas carries the stream size for layout, cursor and input maths
     canvas.height = meta.height;
@@ -271,7 +289,7 @@ function onVideoFrame(now, meta) {
   }
   hasFrame = true;
   if (document.body.dataset.state !== 'on' || document.body.classList.contains('stale')) { setState('on', 'Connected'); drawCursor(); }
-  video.requestVideoFrameCallback(onVideoFrame);
+  if (!polled) video.requestVideoFrameCallback(onVideoFrame);
 }
 
 function onEvent(ev) {

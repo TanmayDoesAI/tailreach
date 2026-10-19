@@ -8,13 +8,14 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Mac">
   <meta name="theme-color" content="#000000">
-  <link rel="apple-touch-icon" href="novnc/app/images/icons/novnc-ios-180.png">
+  <link rel="apple-touch-icon" href="/icons/icon-180.png">
+  <link rel="manifest" href="/manifest.webmanifest">
   <link rel="stylesheet" href="app.css">
   <title>Mac</title>
 </head>
 <body data-state="off" data-mode="trackpad">
   <canvas id="screen"></canvas>
-  <video id="video" playsinline muted autoplay disablepictureinpicture></video>
+  <video id="video" playsinline webkit-playsinline muted autoplay disablepictureinpicture disableremoteplayback x-webkit-airplay="deny"></video>
   <div id="surface"></div>
 
   <!-- Connecting / error -->

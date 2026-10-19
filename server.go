@@ -79,6 +79,11 @@ func (a *app) handler() http.Handler {
 		a.authRoutes(mux)
 	}
 
+	// App manifest and icons (no secrets; needed before sign-in for Add to Home Screen)
+	static := http.FileServer(http.FS(a.web))
+	mux.Handle("GET /icons/", static)
+	mux.Handle("GET /manifest.webmanifest", static)
+
 	viewer := a.viewer()
 	if a.opt.hub {
 		mux.HandleFunc("GET /{$}", a.serveFile("dashboard/index.html"))

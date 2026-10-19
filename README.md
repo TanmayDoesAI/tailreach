@@ -3,9 +3,10 @@
 Your own computers' screens, from any browser on your tailnet: iPhone, iPad, Android or another laptop. It works like Chrome Remote Desktop, but traffic stays inside your own Tailscale network.
 
 ```
-https://mydevices.<your-tailnet>.ts.net/          → dashboard: every device, online or not
-https://mydevices.<your-tailnet>.ts.net/mac/      → that Mac's screen
-https://mydevices.<your-tailnet>.ts.net/mac2/     → another one
+devices/                                        → type this in any browser on your tailnet
+https://devices.<your-tailnet>.ts.net/          → dashboard: every device, online or not
+https://devices.<your-tailnet>.ts.net/mac/      → that Mac's screen
+https://devices.<your-tailnet>.ts.net/mac2/     → another one
 ```
 
 ## How it works
@@ -14,7 +15,7 @@ https://mydevices.<your-tailnet>.ts.net/mac2/     → another one
  iPhone / iPad / laptop browser
         │  HTTPS (Tailscale cert), tailnet only
         ▼
- mydevices --hub   (joins your tailnet as "mydevices")
+ mydevices --hub   (joins your tailnet as "devices")
         │  /mac/ → local      /mac2/ → forwarded over the tailnet
         ▼                          ▼
  Screen Sharing (VNC :5900)   mydevices --name mac2 → its Screen Sharing
