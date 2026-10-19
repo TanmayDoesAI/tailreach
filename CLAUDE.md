@@ -58,4 +58,4 @@ CGO_ENABLED=0 GOARCH=arm64 go vet .
   - state (`security.json`, `trusted.json`, `passkeys.json`, `*.state`, `audit.log`, logs)
   - keys and certificates
 - Never commit real tailnet names (`tailXXXXXX.ts.net`), Tailscale IPs, device names or personal e-mails. Use placeholders like `<tailnet>`.
-- Commit as the GitHub noreply address configured in this repo.
+- Commits are authored by the repo owner (repo-local git config). Do not add AI/assistant attribution or co-author trailers to commits.
