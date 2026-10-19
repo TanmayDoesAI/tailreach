@@ -86,7 +86,7 @@ function connect() {
     retry = 0;
     const p = PRESETS[settings.quality] || PRESETS.auto;
     const side = Math.min(p.maxSide, Math.round(Math.max(screen.width, screen.height) * devicePixelRatio));
-    send({ t: 'start', w: side, h: side, fps: +settings.fps, maxbr: p.maxbr });
+    send({ t: 'start', w: side, h: side, fps: +settings.fps, maxbr: p.maxbr, localCursor: true });
     keepAwake();
   };
   ws.onmessage = (e) => (typeof e.data === 'string' ? onEvent(JSON.parse(e.data)) : onBinary(e.data));
@@ -159,16 +159,39 @@ function onBinary(buf) {
   }
 }
 
+// Frames are shown in step with the display's refresh: if two arrive within one
+// refresh, only the newest is drawn. Keeps motion even and never queues up lag.
+let pendingFrame = null;
+let drawScheduled = false;
+
 function drawFrame(frame) {
+  pendingFrame?.close();
+  pendingFrame = frame;
+  if (!drawScheduled) {
+    drawScheduled = true;
+    requestAnimationFrame(paint);
+  }
+}
+
+function paint() {
+  drawScheduled = false;
+  const frame = pendingFrame;
+  pendingFrame = null;
+  if (!frame) return;
   ctx2d.drawImage(frame, 0, 0, canvas.width, canvas.height);
   frame.close();
   stats.frames++;
-  if (document.body.dataset.state !== 'on') setState('on', 'Connected');
+  if (document.body.dataset.state !== 'on') { setState('on', 'Connected'); drawCursor(); }
 }
 
 function onEvent(ev) {
   switch (ev.t) {
-    case 'cursor': cursor.x = ev.x; cursor.y = ev.y; followCursor(); break;
+    case 'started': screenPts.w = ev.ptW; screenPts.h = ev.ptH; drawCursor(); break;
+    case 'cursor':
+      // The Mac's position is the truth, but while you're moving it we trust our prediction.
+      if (performance.now() - lastLocalMove > 250) { cursor.x = ev.x; cursor.y = ev.y; drawCursor(); followCursor(); }
+      break;
+    case 'cursorImage': setCursorImage(ev); break;
     case 'stats': stats.kbps = ev.kbps; break;
     case 'pong': stats.rtt = Math.round(performance.now() - ev.at); break;
     case 'lock': setLocked(ev.locked); break;
@@ -268,6 +291,46 @@ $('#unlock').addEventListener('submit', async (e) => {
 // ---------- view: fit, zoom and pan ----------
 const view = { z: 1, x: 0, y: 0 };   // zoom factor and top-left offset in CSS px
 const cursor = { x: 0.5, y: 0.5 };   // remote cursor, normalised 0..1
+const screenPts = { w: 1440, h: 900 }; // the Mac's screen size in points
+const cursorShape = { w: 0, h: 0, hx: 0, hy: 0 };
+let lastLocalMove = 0;
+const cursorEl = document.createElement('img');
+cursorEl.id = 'cursor';
+cursorEl.alt = '';
+document.body.append(cursorEl);
+
+// ---------- local cursor ----------
+// The pointer is drawn here, not in the video, so it moves the instant your finger does.
+function setCursorImage(ev) {
+  Object.assign(cursorShape, { w: ev.w, h: ev.h, hx: ev.hx, hy: ev.hy });
+  cursorEl.src = 'data:image/png;base64,' + ev.png;
+  drawCursor();
+}
+
+function drawCursor() {
+  if (!canvas.width || !cursorShape.w) return;
+  const s = baseScale() * view.z;
+  const ptToPx = (canvas.width / screenPts.w) * s;   // Mac points → CSS px on this screen
+  const x = view.x + cursor.x * canvas.width * s - cursorShape.hx * ptToPx;
+  const y = view.y + cursor.y * canvas.height * s - cursorShape.hy * ptToPx;
+  cursorEl.style.width = `${cursorShape.w * ptToPx}px`;
+  cursorEl.style.height = `${cursorShape.h * ptToPx}px`;
+  cursorEl.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+}
+
+// Move the local cursor right away (trackpad: relative in Mac points; touch/mouse: absolute).
+function predictRel(dx, dy) {
+  cursor.x = Math.min(1, Math.max(0, cursor.x + dx / screenPts.w));
+  cursor.y = Math.min(1, Math.max(0, cursor.y + dy / screenPts.h));
+  lastLocalMove = performance.now();
+  drawCursor();
+  followCursor();
+}
+function predictAbs(p) {
+  cursor.x = p.x; cursor.y = p.y;
+  lastLocalMove = performance.now();
+  drawCursor();
+}
 
 function baseScale() {
   return Math.min(innerWidth / (canvas.width || 1), innerHeight / (canvas.height || 1));
@@ -280,6 +343,18 @@ function layout() {
   view.x = w <= innerWidth ? (innerWidth - w) / 2 : Math.min(0, Math.max(innerWidth - w, view.x));
   view.y = h <= innerHeight ? (innerHeight - h) / 2 : Math.min(0, Math.max(innerHeight - h, view.y));
   canvas.style.transform = `translate(${view.x}px, ${view.y}px) scale(${s})`;
+  placeSpaceArrows(w);
+  drawCursor();
+}
+
+// Put the ‹ › Space arrows in the empty side margins when there is room, else at the edges.
+function placeSpaceArrows(shownWidth) {
+  const gutter = view.z === 1 ? (innerWidth - shownWidth) / 2 : 0;
+  const roomy = gutter >= 52;
+  document.body.classList.toggle('roomy', roomy);
+  const left = roomy ? Math.max(4, gutter / 2 - 22) : 6;
+  $('#spacePrev').style.left = `calc(${left}px + env(safe-area-inset-left, 0px) * ${roomy ? 0 : 1})`;
+  $('#spaceNext').style.right = `calc(${left}px + env(safe-area-inset-right, 0px) * ${roomy ? 0 : 1})`;
 }
 addEventListener('resize', layout);
 
@@ -398,6 +473,7 @@ surface.addEventListener('touchmove', (e) => {
         const v = Math.hypot(dx, dy) / dt;                 // px per ms
         const gain = settings.speed * (1 + Math.min(2.5, v * 0.9));
         send({ t: 'rel', dx: dx * gain, dy: dy * gain });
+        predictRel(dx * gain, dy * gain);
       }
     } else if (g.moved && g.mode !== 'done') {
       const p = toRemote(t.x, t.y);
@@ -408,6 +484,7 @@ surface.addEventListener('touchmove', (e) => {
         g.mode = 'drag';
       }
       send({ t: 'abs', x: p.x, y: p.y });
+      predictAbs(p);
     }
   } else if (t.n === 2) {
     if (!g.mode) {
@@ -441,6 +518,7 @@ function endTouch(e) {
     if (settings.mode === 'touch') {
       const p = toRemote(g.sx, g.sy);
       send({ t: 'abs', x: p.x, y: p.y });
+      predictAbs(p);
     }
     click(0);
     g.lastTapEnd = performance.now();
@@ -463,6 +541,7 @@ surface.addEventListener('pointermove', (e) => {
   if (e.pointerType !== 'mouse') return;
   const p = toRemote(e.clientX, e.clientY);
   send({ t: 'abs', x: p.x, y: p.y });
+  predictAbs(p);
 });
 surface.addEventListener('pointerdown', (e) => {
   if (e.pointerType !== 'mouse') return;
@@ -562,6 +641,51 @@ if (window.visualViewport) {
   visualViewport.addEventListener('scroll', fit);
 }
 
+// ---------- no page zoom ----------
+// iOS Safari ignores user-scalable=no, so a pinch on the toolbar or menu would zoom the
+// whole page and leave it stuck. Block that; pinch only ever zooms the Mac screen.
+for (const t of ['gesturestart', 'gesturechange', 'gestureend']) {
+  document.addEventListener(t, (e) => e.preventDefault(), { passive: false });
+}
+document.addEventListener('touchmove', (e) => {
+  if (e.touches.length > 1 || (e.scale && e.scale !== 1)) e.preventDefault();
+}, { passive: false });
+let lastTouchEnd = 0;
+document.addEventListener('touchend', (e) => {   // no double-tap-to-zoom on buttons
+  const now = performance.now();
+  if (now - lastTouchEnd < 320 && e.target.closest('button, #more')) e.preventDefault();
+  lastTouchEnd = now;
+}, { passive: false });
+
+// If the page did get zoomed somehow, snap it back.
+function resetPageZoom() {
+  if (!window.visualViewport || visualViewport.scale <= 1.01) return;
+  const m = document.querySelector('meta[name=viewport]');
+  const c = m.content;
+  m.content = c + ', minimum-scale=1';
+  requestAnimationFrame(() => { m.content = c; });
+}
+window.visualViewport?.addEventListener('resize', () => setTimeout(resetPageZoom, 300));
+
+// ---------- icons ----------
+const ICON_PATHS = {
+  mission: '<rect x="3" y="4" width="7" height="6" rx="1.5"/><rect x="14" y="4" width="7" height="6" rx="1.5"/><rect x="3" y="14" width="7" height="6" rx="1.5"/><rect x="14" y="14" width="7" height="6" rx="1.5"/>',
+  search:  '<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/>',
+  switch:  '<rect x="3" y="6" width="13" height="12" rx="2"/><path d="M8 3h11a2 2 0 0 1 2 2v11"/>',
+  desktop: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
+  left:    '<path d="M15 5l-7 7 7 7"/>',
+  right:   '<path d="M9 5l7 7-7 7"/>',
+  camera:  '<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>',
+  stop:    '<circle cx="12" cy="12" r="9"/><path d="M8.5 8.5l7 7M15.5 8.5l-7 7"/>',
+  paste:   '<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 11h6M9 15h4"/>',
+  copy:    '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>',
+  lock:    '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+  grid:    '<rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/>',
+};
+document.querySelectorAll('[data-icon]').forEach((el) => {
+  el.insertAdjacentHTML('afterbegin', `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICON_PATHS[el.dataset.icon] || ''}</svg>`);
+});
+
 // ---------- clipboard ----------
 // iOS only lets a page write the clipboard during a tap, so Mac → phone goes through
 // a button (in the panel, or the toast that appears when you copy on the Mac).
@@ -613,8 +737,8 @@ screen.orientation?.addEventListener?.('change', () => setTimeout(() => fitMode(
 // ---------- toolbar & panel ----------
 const actions = {
   keyboard: toggleKeyboard,
-  more: () => $('#more').classList.toggle('hidden'),
-  close: () => $('#more').classList.add('hidden'),
+  more: () => openSheet($('#more').classList.contains('hidden')),
+  close: () => openSheet(false),
   mode: () => setMode(settings.mode === 'trackpad' ? 'touch' : 'trackpad'),
   typeText: () => send({ t: 'text', s: $('#clipText').value }),
   sendClip: () => { send({ t: 'clip-set', s: $('#clipText').value }); flash('Put on the Mac clipboard'); },
@@ -634,8 +758,8 @@ const actions = {
     copyToPhone(Promise.resolve(macClip)).then(() => flash('Copied'), () => flash('Clipboard access was blocked'));
   },
   toastClose: () => $('#toast').classList.add('hidden'),
-  fit: () => { fitMode('fit'); $('#more').classList.add('hidden'); },
-  fillScreen: () => { fitMode('fill'); $('#more').classList.add('hidden'); },
+  fit: () => fitMode('fit'),
+  fillScreen: () => fitMode('fill'),
 };
 
 function setMode(m) {
@@ -643,12 +767,21 @@ function setMode(m) {
   store.set('mode', m);
   document.body.dataset.mode = m;
   $('#modeBtn').textContent = m === 'trackpad' ? '◎' : '☝︎';
+  $('#modeSeg').textContent = m === 'trackpad' ? 'Trackpad' : 'Touch';
+}
+
+function openSheet(open) {
+  $('#more').classList.toggle('hidden', !open);
+  $('#backdrop').classList.toggle('hidden', !open);
+  if (open) kbd.blur();
+  else resetPageZoom();
 }
 
 document.addEventListener('click', (e) => {
-  const b = e.target.closest('button');
+  const b = e.target.closest('button, [data-act]');
   if (!b) return;
   const d = b.dataset;
+  if ('close' in d && b.closest('#more')) openSheet(false);
   if (d.act) actions[d.act]?.();
   if (d.key) sendKey(d.key);
   if (d.media) send({ t: 'media', k: d.media });

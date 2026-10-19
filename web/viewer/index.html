@@ -66,61 +66,78 @@
     <button data-combo="cmd+space">⌘␣</button>
   </nav>
 
-  <section id="more" class="sheet hidden">
-    <div class="grid">
-      <button data-combo="ctrl+up">Mission Control</button>
-      <button data-combo="cmd+space">Spotlight</button>
-      <button data-combo="cmd+tab">App Switcher</button>
-      <button data-key="f11">Show Desktop</button>
-      <button data-combo="cmd+opt+esc">Force Quit</button>
-      <button data-combo="cmd+shift+3">Screenshot</button>
-    </div>
-    <div class="grid four">
-      <button data-media="prev">⏮</button>
-      <button data-media="play">⏯</button>
-      <button data-media="next">⏭</button>
-      <button data-media="mute">🔇</button>
-      <button data-media="voldown">🔉</button>
-      <button data-media="volup">🔊</button>
-      <button data-media="brdown">🔅</button>
-      <button data-media="brup">🔆</button>
+  <!-- Switch Spaces / full-screen apps. Sits in the empty side margins when there is room. -->
+  <button id="spacePrev" class="spaceArrow" data-combo="ctrl+left" aria-label="Previous Space">‹</button>
+  <button id="spaceNext" class="spaceArrow" data-combo="ctrl+right" aria-label="Next Space">›</button>
+
+  <!-- "More" bottom sheet. Tap outside to close; actions close it so you see the result. -->
+  <div id="backdrop" class="hidden" data-act="close"></div>
+  <section id="more" class="hidden" aria-label="More">
+    <div class="grabber" data-act="close"></div>
+
+    <h2>Mac</h2>
+    <div class="tiles">
+      <button data-combo="ctrl+up" data-icon="mission" data-close>Mission Control</button>
+      <button data-combo="cmd+space" data-icon="search" data-close>Spotlight</button>
+      <button data-combo="cmd+tab" data-icon="switch" data-close>App Switcher</button>
+      <button data-key="f11" data-icon="desktop" data-close>Desktop</button>
+      <button data-combo="ctrl+left" data-icon="left" data-close>Prev Space</button>
+      <button data-combo="ctrl+right" data-icon="right" data-close>Next Space</button>
+      <button data-combo="cmd+shift+3" data-icon="camera" data-close>Screenshot</button>
+      <button data-combo="cmd+opt+esc" data-icon="stop" data-close>Force Quit</button>
     </div>
 
-    <label class="row">Quality
-      <select id="quality">
-        <option value="saver">Data saver</option>
-        <option value="auto">Auto</option>
-        <option value="crisp">Crisp</option>
-      </select>
-    </label>
-    <label class="row">Frame rate
-      <select id="fps"><option value="30">30</option><option value="60">60</option></select>
-    </label>
-    <label class="row">Pointer speed <input id="speed" type="range" min="0.5" max="3" step="0.1"></label>
-    <label class="row">Natural scrolling <input id="natural" type="checkbox"></label>
-
-    <div class="grid two">
-      <button data-act="pasteToMac">Paste phone clipboard → Mac</button>
-      <button data-act="copyFromMac">Copy Mac clipboard → phone</button>
+    <h2>Media</h2>
+    <div class="pills">
+      <button data-media="prev" aria-label="Previous">⏮</button>
+      <button data-media="play" aria-label="Play / pause">⏯</button>
+      <button data-media="next" aria-label="Next">⏭</button>
+      <button data-media="voldown" aria-label="Volume down">🔉</button>
+      <button data-media="volup" aria-label="Volume up">🔊</button>
+      <button data-media="mute" aria-label="Mute">🔇</button>
+      <button data-media="brdown" aria-label="Brightness down">🔅</button>
+      <button data-media="brup" aria-label="Brightness up">🔆</button>
     </div>
-    <div class="clip">
-      <textarea id="clipText" placeholder="Text to type on the Mac…"></textarea>
-      <div class="grid two">
-        <button data-act="typeText">Type it on the Mac</button>
-        <button data-act="sendClip">Put on Mac clipboard</button>
+
+    <h2>Clipboard</h2>
+    <div class="two">
+      <button data-act="pasteToMac" data-icon="paste">Paste on Mac</button>
+      <button data-act="copyFromMac" data-icon="copy">Copy from Mac</button>
+    </div>
+    <details class="clip">
+      <summary>Type or send text…</summary>
+      <textarea id="clipText" placeholder="Text for the Mac"></textarea>
+      <div class="two">
+        <button data-act="typeText">Type it</button>
+        <button data-act="sendClip">Put on clipboard</button>
       </div>
+    </details>
+
+    <h2>View</h2>
+    <div class="seg" id="fitSeg">
+      <button data-act="fit" data-close>Fit</button>
+      <button data-act="fillScreen" data-close>Fill</button>
+      <button data-act="mode" id="modeSeg">Trackpad</button>
     </div>
-    <div class="grid two">
-      <button data-act="fit">Fit to screen</button>
-      <button data-act="fillScreen">Fill screen</button>
+    <div class="rows">
+      <label class="row">Quality
+        <select id="quality">
+          <option value="saver">Data saver</option>
+          <option value="auto">Auto</option>
+          <option value="crisp">Crisp</option>
+        </select>
+      </label>
+      <label class="row">Frame rate
+        <select id="fps"><option value="30">30 fps</option><option value="60">60 fps</option></select>
+      </label>
+      <label class="row">Pointer speed <input id="speed" type="range" min="0.5" max="3" step="0.1"></label>
+      <label class="row">Natural scrolling <input id="natural" type="checkbox"></label>
     </div>
 
-    <div class="grid three">
-      <button data-combo="ctrl+cmd+q">Lock Mac</button>
-      <a class="btn" href="classic/">Unlock (VNC)</a>
-      <a class="btn" href="../">All devices</a>
+    <div class="two footer">
+      <button data-combo="ctrl+cmd+q" data-icon="lock" data-close>Lock Mac</button>
+      <a class="btn" href="../" data-icon="grid">All devices</a>
     </div>
-    <button data-act="close" class="primary">Done</button>
   </section>
 
   <!-- Shown when something is copied on the Mac -->

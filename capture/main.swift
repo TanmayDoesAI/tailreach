@@ -158,7 +158,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     private var refinements = 0
     private var timer: DispatchSourceTimer?
 
-    func start(maxW: Int, maxH: Int, fps: Int) async {
+    func start(maxW: Int, maxH: Int, fps: Int, cursor: Bool) async {
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
             guard let d = content.displays.first(where: { $0.displayID == CGMainDisplayID() }) ?? content.displays.first else {
@@ -186,7 +186,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
             cfg.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange // what the encoder wants: no conversion
             cfg.colorMatrix = CGDisplayStream.yCbCrMatrix_ITU_R_709_2
             cfg.queueDepth = 5
-            cfg.showsCursor = true
+            cfg.showsCursor = cursor // false when the viewer draws the cursor itself (feels instant)
 
             if let old = stream { try? await old.stopCapture() }
             q.sync {
@@ -199,7 +199,8 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
             try await s.startCapture()
             stream = s
             startRefineTimer()
-            event(["t": "started", "w": w, "h": h, "nativeW": Int(nativeW), "nativeH": Int(nativeH)])
+            event(["t": "started", "w": w, "h": h, "nativeW": Int(nativeW), "nativeH": Int(nativeH),
+                   "ptW": Double(filter.contentRect.width), "ptH": Double(filter.contentRect.height)])
         } catch {
             event(["t": "error", "msg": error.localizedDescription, "needsPermission": !CGPreflightScreenCaptureAccess()])
         }
@@ -252,7 +253,6 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
 final class Input {
     let src = CGEventSource(stateID: .hidSystemState)
     var down = [false, false, false]
-    var lastCursorEvent = Date.distantPast
 
     var bounds: CGRect { CGDisplayBounds(CGMainDisplayID()) }
     var pos: CGPoint { CGEvent(source: nil)?.location ?? .zero }
@@ -269,7 +269,6 @@ final class Input {
         let e = CGEvent(mouseEventSource: src, mouseType: type, mouseCursorPosition: p, mouseButton: btn)
         e?.flags = mods
         e?.post(tap: .cghidEventTap)
-        reportCursor(p)
     }
 
     func moveAbs(_ x: Double, _ y: Double, mods: CGEventFlags) {
@@ -344,13 +343,6 @@ final class Input {
         }
     }
 
-    private func reportCursor(_ p: CGPoint) {
-        guard Date().timeIntervalSince(lastCursorEvent) > 1.0 / 30 else { return }
-        lastCursorEvent = Date()
-        let b = bounds
-        event(["t": "cursor", "x": (p.x - b.minX) / b.width, "y": (p.y - b.minY) / b.height])
-    }
-
     static func flags(_ mods: [String]) -> CGEventFlags {
         var f: CGEventFlags = []
         for m in mods {
@@ -397,7 +389,8 @@ func handle(_ c: [String: Any]) {
     case "start":
         let w = Int(num(c["w"])), h = Int(num(c["h"])), fps = Int(num(c["fps"]))
         if let br = c["br"] as? NSNumber { capture.enc.bitrate = br.intValue }
-        Task { await capture.start(maxW: max(320, w), maxH: max(240, h), fps: (10...120).contains(fps) ? fps : 60) }
+        let localCursor = c["localCursor"] as? Bool ?? false
+        Task { await capture.start(maxW: max(320, w), maxH: max(240, h), fps: (10...120).contains(fps) ? fps : 60, cursor: !localCursor) }
     case "stop": Task { await capture.stop() }
     case "kf": capture.requestKeyframe()
     case "br": capture.setBitrate(Int(num(c["bps"])))
@@ -453,6 +446,41 @@ final class Clipboard {
     }
 }
 
+// MARK: - Cursor
+
+/// Sends the cursor's position (60 Hz, on change) and its current shape (on change),
+/// so the viewer can draw it locally with no round-trip delay.
+final class CursorWatcher {
+    private var lastPos = CGPoint(x: -1, y: -1)
+    private var lastShape = 0
+    private var tick = 0
+    private var timer: Timer?
+
+    init() {
+        timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { [weak self] _ in self?.poll() }
+        RunLoop.main.add(timer!, forMode: .common)
+    }
+
+    private func poll() {
+        let b = CGDisplayBounds(CGMainDisplayID())
+        if let p = CGEvent(source: nil)?.location, p != lastPos {
+            lastPos = p
+            event(["t": "cursor", "x": (p.x - b.minX) / b.width, "y": (p.y - b.minY) / b.height])
+        }
+        tick += 1
+        guard tick % 6 == 0, let cur = NSCursor.currentSystem else { return } // shape: 10×/s
+        let img = cur.image
+        guard let tiff = img.tiffRepresentation else { return }
+        let shape = tiff.hashValue ^ Int(cur.hotSpot.x * 1000) ^ Int(cur.hotSpot.y)
+        guard shape != lastShape,
+              let rep = NSBitmapImageRep(data: tiff),
+              let png = rep.representation(using: .png, properties: [:]) else { return }
+        lastShape = shape
+        event(["t": "cursorImage", "png": png.base64EncodedString(),
+               "w": img.size.width, "h": img.size.height, "hx": cur.hotSpot.x, "hy": cur.hotSpot.y])
+    }
+}
+
 // MARK: - Lock screen
 
 /// Reports when the Mac locks or unlocks, so the viewer can offer to unlock it.
@@ -491,6 +519,7 @@ let app = NSApplication.shared
 app.setActivationPolicy(.accessory) // no Dock icon, no menu bar
 let clipboard = Clipboard()
 let lockWatcher = LockWatcher()
+let cursorWatcher = CursorWatcher()
 let panel = SharePanel(viewer: arg("--viewer") ?? "a device") {
     event(["t": "stop-request"]) // mydevices ends the session, which ends this process
 }

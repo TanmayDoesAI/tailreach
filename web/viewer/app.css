@@ -57,13 +57,7 @@ input, textarea {
 .muted { color: var(--muted); margin: 0; }
 .hidden { display: none !important; }
 
-#login { top: 50%; transform: translate(-50%, -50%); }
-body[data-state="on"] #login { display: none; }
 
-#more {
-  bottom: calc(12px + var(--safe-b) + var(--kb-offset));
-  max-height: 75vh; overflow-y: auto;
-}
 .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .grid.two { grid-template-columns: 1fr 1fr; }
 .grid button { min-height: 52px; font-size: 13px; }
@@ -71,6 +65,7 @@ body[data-state="on"] #login { display: none; }
 .row input[type="range"] { width: 60%; padding: 0; }
 .row input[type="checkbox"] { width: 22px; height: 22px; }
 .clip { display: flex; flex-direction: column; gap: 8px; }
+#more details.clip { display: block; }
 .clip textarea { min-height: 70px; resize: vertical; }
 
 /* ---------- status pill ---------- */
@@ -166,3 +161,69 @@ body:not([data-state="on"]) #bar, body:not([data-state="on"]) #keys { display: n
 #unlock .err { color: var(--bad); margin: 0; min-height: 1.2em; }
 body.locked #splash { opacity: 0; pointer-events: none; }
 body.locked #screen { filter: blur(12px) brightness(.5); }
+
+/* ---------- no accidental page zoom ---------- */
+html, body { touch-action: none; }
+button, a, select, input, textarea, label, summary { touch-action: manipulation; }
+
+/* ---------- Space arrows ---------- */
+.spaceArrow {
+  position: fixed; top: 50%; transform: translateY(-50%); z-index: 8;
+  width: 44px; height: 64px; min-height: 0; padding: 0; border-radius: 14px;
+  font-size: 30px; line-height: 1; color: var(--text);
+  background: rgba(20, 22, 30, .55); border: 1px solid var(--line);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  opacity: .55; transition: opacity .2s;
+}
+.spaceArrow:active { opacity: 1; }
+body.roomy .spaceArrow { opacity: .9; background: rgba(255,255,255,.06); }
+body:not([data-state="on"]) .spaceArrow, body.locked .spaceArrow, body.bar-hidden .spaceArrow { display: none; }
+
+/* ---------- "More" bottom sheet ---------- */
+#backdrop { position: fixed; inset: 0; z-index: 19; background: rgba(0,0,0,.35); }
+#more {
+  position: fixed; z-index: 20; left: 50%; transform: translateX(-50%);
+  bottom: 0; width: min(560px, 100%);
+  max-height: min(78vh, 78dvh); overflow-y: auto; overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch; touch-action: pan-y;
+  padding: 8px 16px calc(16px + var(--safe-b));
+  background: var(--panel); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+  border: 1px solid var(--line); border-bottom: 0; border-radius: 22px 22px 0 0;
+  animation: sheetUp .22s cubic-bezier(.2,.8,.2,1);
+}
+@keyframes sheetUp { from { transform: translate(-50%, 30px); opacity: 0; } }
+@media (orientation: landscape) and (max-height: 500px) {
+  #more { width: min(720px, 100%); max-height: 92vh; }
+  #more .tiles { grid-template-columns: repeat(8, 1fr); }
+}
+#more .grabber { width: 40px; height: 5px; border-radius: 3px; background: rgba(255,255,255,.25); margin: 4px auto 6px; }
+#more h2 { font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 14px 2px 8px; }
+#more svg { width: 22px; height: 22px; flex: none; }
+
+#more .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+#more .tiles button {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  min-height: 74px; padding: 8px 4px; font-size: 11.5px; line-height: 1.15; border-radius: 14px;
+}
+#more .pills { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+#more .pills button { flex: 1 0 44px; min-height: 44px; padding: 0; font-size: 18px; border-radius: 12px; }
+#more .two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+#more .two button, #more .two .btn {
+  display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px; font-size: 14px;
+}
+#more .footer { margin-top: 16px; }
+#more details.clip { margin-top: 8px; }
+#more details.clip summary { color: var(--accent); font-size: 14px; padding: 6px 2px; cursor: pointer; }
+#more details.clip textarea { margin: 6px 0 8px; min-height: 70px; }
+#more .seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+#more .seg button { border: 0; border-radius: 0; min-height: 42px; background: var(--btn); }
+#more .seg button + button { border-left: 1px solid var(--line); }
+#more .rows { margin-top: 10px; display: flex; flex-direction: column; gap: 10px; }
+#more .row { font-size: 14px; }
+
+/* Local cursor, drawn on top of the video */
+#cursor {
+  position: fixed; top: 0; left: 0; z-index: 6; pointer-events: none;
+  will-change: transform; image-rendering: auto;
+}
+body:not([data-state="on"]) #cursor, body.locked #cursor { display: none; }
