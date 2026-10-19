@@ -96,10 +96,12 @@ function connect() {
     const side = Math.min(p.maxSide, Math.round(Math.max(screen.width, screen.height) * devicePixelRatio));
     send({ t: 'start', w: side, h: side, fps: +settings.fps, maxbr: p.maxbr, localCursor: true });
     keepAwake();
+    startRTC();   // video starts on the WebSocket and moves to WebRTC once it connects
   };
   ws.onmessage = (e) => (typeof e.data === 'string' ? onEvent(JSON.parse(e.data)) : onBinary(e.data));
   ws.onclose = () => {
     ws = null;
+    stopRTC(false);
     resetDecoder();
     if (document.visibilityState === 'visible') {
       setState('connecting', 'Reconnecting');
@@ -193,6 +195,85 @@ function paint() {
   if (document.body.dataset.state !== 'on' || document.body.classList.contains('stale')) { setState('on', 'Connected'); drawCursor(); }
 }
 
+// ---------- WebRTC video ----------
+// Same H.264, carried like AirPlay/FaceTime: UDP over the tailnet, a minimal jitter
+// buffer, congestion control. Safari's hardware decoder plays it in a <video>. If it
+// can't connect, video simply stays on the WebSocket.
+const video = $('#video');
+let pc = null;
+let rtcTimer = 0;
+
+async function startRTC() {
+  if (!window.RTCPeerConnection || store.get('transport', 'auto') === 'ws') return;
+  stopRTC(false);
+  try {
+    pc = new RTCPeerConnection({ iceServers: [] });   // tailnet only: no STUN/TURN
+    const tr = pc.addTransceiver('video', { direction: 'recvonly' });
+    try {
+      const codecs = RTCRtpReceiver.getCapabilities('video').codecs.filter((c) => /h264/i.test(c.mimeType));
+      if (codecs.length) tr.setCodecPreferences(codecs);
+    } catch {}
+    pc.ontrack = (e) => {
+      try { e.receiver.jitterBufferTarget = 0; } catch {}   // show frames as soon as they're decodable
+      try { e.receiver.playoutDelayHint = 0; } catch {}
+      video.srcObject = new MediaStream([e.track]);
+      video.play().catch(() => {});
+      video.requestVideoFrameCallback?.(onVideoFrame);
+    };
+    pc.onconnectionstatechange = () => {
+      if (pc && ['failed', 'closed'].includes(pc.connectionState)) fallbackToWS();
+    };
+    await pc.setLocalDescription(await pc.createOffer());
+    await gathered(pc, 1000);
+    send({ t: 'rtc-offer', sdp: pc.localDescription.sdp });
+    rtcTimer = setTimeout(() => { if (!document.body.classList.contains('rtc')) fallbackToWS(); }, 6000);
+  } catch {
+    fallbackToWS();
+  }
+}
+
+function gathered(conn, ms) {
+  return new Promise((resolve) => {
+    if (conn.iceGatheringState === 'complete') return resolve();
+    const t = setTimeout(resolve, ms);
+    conn.addEventListener('icegatheringstatechange', () => {
+      if (conn.iceGatheringState === 'complete') { clearTimeout(t); resolve(); }
+    });
+  });
+}
+
+function fallbackToWS() {
+  if (pc) stopRTC(true);
+}
+
+function stopRTC(tellServer) {
+  clearTimeout(rtcTimer);
+  if (pc) {
+    pc.close();
+    pc = null;
+    if (tellServer) send({ t: 'rtc-off' });
+  }
+  video.srcObject = null;
+  document.body.classList.remove('rtc');
+}
+
+function onVideoFrame(now, meta) {
+  if (!video.srcObject) return;
+  stats.frames++;
+  if (canvas.width !== meta.width || canvas.height !== meta.height) {
+    canvas.width = meta.width;   // canvas carries the stream size for layout, cursor and input maths
+    canvas.height = meta.height;
+    layout();
+  }
+  if (!document.body.classList.contains('rtc')) {
+    document.body.classList.add('rtc');
+    clearTimeout(rtcTimer);
+  }
+  hasFrame = true;
+  if (document.body.dataset.state !== 'on' || document.body.classList.contains('stale')) { setState('on', 'Connected'); drawCursor(); }
+  video.requestVideoFrameCallback(onVideoFrame);
+}
+
 function onEvent(ev) {
   switch (ev.t) {
     case 'started': screenPts.w = ev.ptW; screenPts.h = ev.ptH; drawCursor(); break;
@@ -208,6 +289,8 @@ function onEvent(ev) {
       break;
     case 'pong': stats.rtt = Math.round(performance.now() - ev.at); break;
     case 'lock': setLocked(ev.locked); break;
+    case 'rtc-answer': pc?.setRemoteDescription({ type: 'answer', sdp: ev.sdp }).catch(() => fallbackToWS()); break;
+    case 'rtc-failed': stopRTC(false); break;   // the server has already switched back
     case 'error':
       if (locked) break;   // capture pauses while the Mac is locked; that's expected
       setState('off', ev.needsPermission
@@ -226,6 +309,7 @@ setInterval(() => {
     if (!document.body.classList.contains('stale')) {
       const relayed = stats.path && stats.path !== 'direct';
       $('#statusText').textContent = `${stats.rtt} ms${relayed ? ' · relayed' : ''}`;
+      $('#status').classList.toggle('rtc', document.body.classList.contains('rtc'));
     }
     $('#status').title = `${stats.path || 'unknown path'} · ${stats.fps} fps · ${(stats.kbps / 1000).toFixed(1)} Mbps`;
   }
@@ -360,6 +444,9 @@ function layout() {
   view.x = w <= innerWidth ? (innerWidth - w) / 2 : Math.min(0, Math.max(innerWidth - w, view.x));
   view.y = h <= innerHeight ? (innerHeight - h) / 2 : Math.min(0, Math.max(innerHeight - h, view.y));
   canvas.style.transform = `translate(${view.x}px, ${view.y}px) scale(${s})`;
+  video.style.width = `${canvas.width}px`;
+  video.style.height = `${canvas.height}px`;
+  video.style.transform = canvas.style.transform;
   placeSpaceArrows(w);
   drawCursor();
 }

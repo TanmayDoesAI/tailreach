@@ -263,6 +263,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     func requestKeyframe() { q.async { self.enc.forceKey = true } }
+    func resendConfig() { q.async { self.enc.resendConfig() } }
     func setBitrate(_ bps: Int) { q.async { self.enc.setBitrate(bps) } }
 }
 
@@ -431,6 +432,7 @@ func handle(_ c: [String: Any]) {
             await MainActor.run { panel.hide() }
         }
     case "kf": capture.requestKeyframe()
+    case "resend": capture.resendConfig()
     case "br": capture.setBitrate(Int(num(c["bps"])))
     case "abs": inputQ.async { input.moveAbs(num(c["x"]), num(c["y"]), mods: mods) }
     case "rel": inputQ.async { input.moveRel(num(c["dx"]), num(c["dy"]), mods: mods) }

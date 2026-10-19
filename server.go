@@ -33,6 +33,7 @@ type app struct {
 	web     fs.FS
 	domain  string // MagicDNS suffix, e.g. tail1234.ts.net
 	selfDNS string // this node, e.g. mydevices.tail1234.ts.net
+	tsIP4   string // this node's tailnet IPv4 (WebRTC media only ever uses it)
 	owner   string // Tailscale login of whoever signed this device in
 	allow   map[string]bool
 	auth2   *authState // passkeys (hub / standalone)

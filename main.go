@@ -18,6 +18,7 @@ import (
 	"io/fs"
 	"log"
 	"net"
+	"net/netip"
 	"net/http"
 	"os"
 	"os/exec"
@@ -133,6 +134,7 @@ func run(o options) error {
 		lc:      lc,
 		domain:  st.CurrentTailnet.MagicDNSSuffix,
 		selfDNS: strings.TrimSuffix(st.Self.DNSName, "."),
+		tsIP4:   firstIPv4(st.Self.TailscaleIPs),
 		allow:   map[string]bool{},
 		devices: map[string]*device{},
 	}
@@ -344,4 +346,13 @@ func passwordCmd(args []string) error {
 		fmt.Println("✓ Password set. Every device will be asked for it again (then trusted for 30 days).")
 	}
 	return nil
+}
+
+func firstIPv4(ips []netip.Addr) string {
+	for _, ip := range ips {
+		if ip.Is4() {
+			return ip.String()
+		}
+	}
+	return ""
 }

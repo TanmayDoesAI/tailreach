@@ -46,11 +46,14 @@ svg { width: 20px; height: 20px; flex: none; }
 .hidden { display: none !important; }
 
 /* ---------- screen ---------- */
-#screen { position: fixed; top: 0; left: 0; transform-origin: 0 0; will-change: transform; }
+#screen, #video { position: fixed; top: 0; left: 0; transform-origin: 0 0; will-change: transform; }
+#video { visibility: hidden; object-fit: fill; background: #000; pointer-events: none; }
+body.rtc #video { visibility: visible; }
+body.rtc #screen { visibility: hidden; }
 #surface { position: fixed; inset: 0; z-index: 5; }
 #cursor { position: fixed; top: 0; left: 0; z-index: 6; pointer-events: none; will-change: transform; }
 body:not([data-state="on"]) #cursor, body.locked #cursor { display: none; }
-body.locked #screen { filter: blur(20px) brightness(0.45); transition: filter .3s; }
+body.locked #screen, body.locked #video { filter: blur(20px) brightness(0.45); transition: filter .3s; }
 
 /* ---------- splash ---------- */
 #splash {
@@ -114,7 +117,7 @@ body.bar-hidden #bar, body.bar-hidden #keys { display: none; }
 body[data-state="connecting"] .dot { background: var(--amber); }
 body[data-state="on"] .dot { background: var(--green); }
 body.relayed .dot, body.stale .dot { background: var(--amber); }
-body.stale #screen { opacity: .7; transition: opacity .3s; }
+body.stale #screen, body.stale #video { opacity: .7; transition: opacity .3s; }
 
 /* ---------- Space arrows ---------- */
 .space {

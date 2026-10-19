@@ -110,9 +110,36 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 	bitrate.Store(8_000_000)
 	maxBitrate.Store(20_000_000)
 
+	// WebRTC, once the browser has negotiated it and ICE is connected, carries the video.
+	var rtc atomic.Pointer[rtcSession]
+	var lastConfig atomic.Pointer[[]byte]
+	defer func() {
+		if s := rtc.Load(); s != nil {
+			s.close()
+		}
+	}()
+	viaRTC := func() *rtcSession {
+		if s := rtc.Load(); s != nil && s.connected.Load() {
+			return s
+		}
+		return nil
+	}
+
 	// helper → queue, dropping video while the link is congested
 	waitKey := false
 	detach := h.attach(func(typ byte, buf []byte) {
+		if typ == 1 {
+			cfg := buf
+			lastConfig.Store(&cfg)
+		}
+		if s := viaRTC(); s != nil && typ != 3 {
+			if typ == 1 {
+				s.setConfig(buf)
+			} else {
+				s.writeFrame(buf) // paced, retransmitted and congestion-controlled by WebRTC
+			}
+			return
+		}
 		switch typ {
 		case 3: // JSON event
 			var ev struct{ T string }
@@ -186,7 +213,17 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 				return
 			case <-t.C:
 			}
-			if congested.Swap(false) {
+			if s := viaRTC(); s != nil {
+				// Steer the encoder to what congestion control says the path carries (with headroom).
+				if t := int64(s.targetBitrate()) * 85 / 100; t > 0 {
+					t = min(max(t, minBitrate), maxBitrate.Load())
+					if d := t - bitrate.Load(); d > t/10 || -d > t/10 {
+						bitrate.Store(t)
+						toHelper(map[string]any{"t": "br", "bps": t})
+					}
+				}
+				sentBytes.Add(s.sentBytes.Swap(0))
+			} else if congested.Swap(false) {
 				calm = 0
 			} else if calm++; calm >= 3 && bitrate.Load() < maxBitrate.Load() {
 				br := min(maxBitrate.Load(), bitrate.Load()*115/100)
@@ -198,6 +235,7 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 			}
 			stats, _ := json.Marshal(map[string]any{
 				"t": "stats", "br": bitrate.Load(), "kbps": sentBytes.Swap(0) * 8 / 1000, "drops": drops.Swap(0), "path": path,
+				"rtc": viaRTC() != nil,
 			})
 			select {
 			case out <- outMsg{typ: websocket.MessageText, data: stats}:
@@ -232,6 +270,38 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 			case out <- outMsg{typ: websocket.MessageText, data: b}:
 			default:
 			}
+		case t == "rtc-offer":
+			sdp, _ := c["sdp"].(string)
+			if old := rtc.Swap(nil); old != nil {
+				old.close()
+			}
+			sess, answer, err := a.newRTC(sdp, int(maxBitrate.Load()),
+				func() { toHelper(map[string]any{"t": "kf"}) },
+				func() { // connected: switch video over with a fresh keyframe (SPS/PPS in front)
+					if cfg := lastConfig.Load(); cfg != nil {
+						if s := rtc.Load(); s != nil {
+							s.setConfig(*cfg)
+						}
+					}
+					toHelper(map[string]any{"t": "kf"})
+					log.Printf("▶ %s: video over WebRTC", viewer)
+				},
+				func() { // failed: back to the WebSocket
+					toHelper(map[string]any{"t": "resend"})
+					push(outMsg{typ: websocket.MessageText, data: jsonMsg(map[string]any{"t": "rtc-failed"})})
+				})
+			if err != nil {
+				log.Printf("webrtc: %v", err)
+				push(outMsg{typ: websocket.MessageText, data: jsonMsg(map[string]any{"t": "rtc-failed"})})
+				continue
+			}
+			rtc.Store(sess)
+			push(outMsg{typ: websocket.MessageText, data: jsonMsg(map[string]any{"t": "rtc-answer", "sdp": answer})})
+		case t == "rtc-off":
+			if old := rtc.Swap(nil); old != nil {
+				old.close()
+			}
+			toHelper(map[string]any{"t": "resend"}) // WebSocket decoder needs config + keyframe again
 		case t == "start":
 			if mb, ok := c["maxbr"].(float64); ok && mb >= minBitrate {
 				maxBitrate.Store(min(int64(mb), 50_000_000))

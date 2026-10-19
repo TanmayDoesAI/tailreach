@@ -342,6 +342,31 @@ func (a *app) control(req map[string]any) map[string]any {
 			a.auth2.mu.Unlock()
 		}
 		a.audit("passkeys-reset", "this Mac", "")
+	case "testSession":
+		// For local testing tools (tools/streamtest): a short session cookie. Only reachable
+		// through this owner-only socket, i.e. by someone already logged in to this Mac.
+		if a.auth2 == nil {
+			return map[string]any{"error": "no sign-in on this device"}
+		}
+		tok := base64.RawURLEncoding.EncodeToString(randBytes(32))
+		now := time.Now()
+		a.auth2.mu.Lock()
+		a.auth2.sessions[tokenHash(tok)] = &session{created: now.Add(15*time.Minute - sessionMaxAge), seen: now, device: "test tool"}
+		a.auth2.mu.Unlock()
+		cookies := sessionCookie + "=" + tok
+		// If a device password is on, also trust the tool's tailnet IP for 15 minutes.
+		if ip, _ := req["ip"].(string); ip != "" && s.required() {
+			if who, err := a.lc.WhoIs(context.Background(), net.JoinHostPort(ip, "1")); err == nil && who.Node != nil {
+				tt := base64.RawURLEncoding.EncodeToString(randBytes(32))
+				s.mu.Lock()
+				s.trust = append(s.trust, trustEntry{ID: tokenHash(tt), Node: string(who.Node.StableID), Device: "test tool", Created: now, Expires: now.Add(15 * time.Minute)})
+				s.saveLocked()
+				s.mu.Unlock()
+				cookies += "; " + trustCookie + "=" + tt
+			}
+		}
+		a.audit("test-session", "this Mac", "")
+		return map[string]any{"cookie": cookies}
 	case "stopSessions":
 		stopAllSessions()
 		if a.auth2 != nil {
