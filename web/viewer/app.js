@@ -315,7 +315,12 @@ function onEvent(ev) {
         ? 'Allow Screen Recording for mydevices-capture on the Mac (System Settings → Privacy & Security).'
         : `Mac: ${ev.msg}`);
       break;
-    case 'warn': console.warn(ev.msg); break;
+    case 'warn':
+      // Input blocked on the Mac: say so instead of letting the local cursor pretend.
+      $('#toastText').textContent = 'Mac is blocking input. Allow mydevices-capture in Privacy & Security → Accessibility.';
+      $('#toast').classList.remove('hidden');
+      clearTimeout(onMacClipboard.t);
+      break;
     case 'clip': onMacClipboard(ev); break;
   }
 }
