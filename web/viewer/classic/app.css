@@ -1,0 +1,107 @@
+/* Mac Remote — tweak the look here. Colors live in :root. */
+:root {
+  --bg: #0b0d12;
+  --panel: rgba(22, 25, 33, 0.92);
+  --line: rgba(255, 255, 255, 0.10);
+  --text: #e9ecf2;
+  --muted: #8b93a7;
+  --accent: #4f8cff;
+  --ok: #34c759;
+  --warn: #ffb020;
+  --bad: #ff453a;
+  --btn: rgba(255, 255, 255, 0.08);
+  --radius: 14px;
+  --kb-offset: 0px;   /* set by app.js when the on-screen keyboard is open */
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-t: env(safe-area-inset-top, 0px);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body {
+  margin: 0; height: 100%; overflow: hidden;
+  background: var(--bg); color: var(--text);
+  font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  overscroll-behavior: none;
+  -webkit-user-select: none; user-select: none;
+}
+
+#screen { position: fixed; inset: 0; }
+
+button {
+  font: inherit; color: var(--text); background: var(--btn);
+  border: 1px solid var(--line); border-radius: 10px;
+  min-height: 40px; padding: 0 12px; cursor: pointer;
+}
+button:active { transform: scale(0.96); }
+button.primary { background: var(--accent); border-color: transparent; color: #fff; font-weight: 600; }
+button.danger { color: var(--bad); }
+button.active { background: var(--accent); color: #fff; }
+
+input, textarea {
+  font: inherit; font-size: 16px; /* 16px stops iOS zooming on focus */
+  color: var(--text); background: rgba(255,255,255,0.06);
+  border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; width: 100%;
+  -webkit-user-select: text; user-select: text;
+}
+
+/* ---------- sheets (login + more panel) ---------- */
+.sheet {
+  position: fixed; left: 50%; transform: translateX(-50%);
+  width: min(420px, calc(100% - 32px));
+  background: var(--panel); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--line); border-radius: 20px;
+  padding: 20px; display: flex; flex-direction: column; gap: 12px; z-index: 20;
+}
+.sheet h1 { margin: 0; font-size: 22px; }
+.muted { color: var(--muted); margin: 0; }
+.hidden { display: none !important; }
+
+#login { top: 50%; transform: translate(-50%, -50%); }
+body[data-state="on"] #login { display: none; }
+
+#more {
+  bottom: calc(12px + var(--safe-b) + var(--kb-offset));
+  max-height: 75vh; overflow-y: auto;
+}
+.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.grid.two { grid-template-columns: 1fr 1fr; }
+.grid button { min-height: 52px; font-size: 13px; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.row input[type="range"] { width: 60%; padding: 0; }
+.row input[type="checkbox"] { width: 22px; height: 22px; }
+.clip { display: flex; flex-direction: column; gap: 8px; }
+.clip textarea { min-height: 70px; resize: vertical; }
+
+/* ---------- status pill ---------- */
+.pill {
+  position: fixed; top: calc(8px + var(--safe-t)); left: 50%; transform: translateX(-50%);
+  z-index: 15; display: flex; align-items: center; gap: 8px;
+  min-height: 30px; border-radius: 999px; font-size: 13px;
+  background: var(--panel); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  opacity: 0.85;
+}
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--bad); }
+body[data-state="connecting"] .dot { background: var(--warn); }
+body[data-state="on"] .dot { background: var(--ok); }
+
+/* ---------- toolbar + extra keys ---------- */
+#bar, #keys {
+  position: fixed; left: 50%; transform: translateX(-50%); z-index: 10;
+  display: flex; gap: 6px; padding: 6px;
+  background: var(--panel); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  max-width: calc(100% - 16px); overflow-x: auto; scrollbar-width: none;
+}
+#bar { bottom: calc(10px + var(--safe-b) + var(--kb-offset)); }
+#keys { bottom: calc(68px + var(--safe-b) + var(--kb-offset)); display: none; }
+body.kbd-open #keys { display: flex; }
+#bar button, #keys button { min-width: 40px; padding: 0 10px; flex: none; }
+body.bar-hidden #bar, body.bar-hidden #keys { display: none; }
+body:not([data-state="on"]) #bar, body:not([data-state="on"]) #keys { display: none; }
+
+/* Hidden input for the soft keyboard — must stay focusable, so not display:none */
+#kbd {
+  position: fixed; top: 0; left: 0; width: 1px; height: 1px;
+  opacity: 0; border: 0; padding: 0; resize: none; pointer-events: none;
+}

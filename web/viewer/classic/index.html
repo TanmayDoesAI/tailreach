@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Mac">
+  <meta name="theme-color" content="#0b0d12">
+  <link rel="apple-touch-icon" href="../novnc/app/images/icons/novnc-ios-180.png">
+  <link rel="stylesheet" href="app.css">
+  <title>Mac Remote</title>
+</head>
+<body>
+  <!-- The Mac screen is drawn in here by noVNC -->
+  <div id="screen"></div>
+
+  <!-- Login: shown until connected -->
+  <form id="login" class="sheet" autocomplete="on">
+    <h1 id="loginTitle">Mac Remote</h1>
+    <a class="muted back" href="../../">← All devices</a>
+    <p class="muted" id="loginMsg">Sign in with your Mac account</p>
+    <input id="user" name="username" placeholder="Mac username" autocomplete="username" autocapitalize="off" autocorrect="off">
+    <input id="pass" name="password" type="password" placeholder="Mac password" autocomplete="current-password">
+    <button type="submit" class="primary">Connect</button>
+  </form>
+
+  <!-- Status pill: tap to show / hide the toolbar -->
+  <button id="status" class="pill"><span class="dot"></span><span id="statusText">Disconnected</span></button>
+
+  <!-- Toolbar -->
+  <nav id="bar">
+    <button data-act="keyboard" title="Keyboard">⌨︎</button>
+    <button data-mod="cmd"   title="Command (sticky)">⌘</button>
+    <button data-mod="opt"   title="Option (sticky)">⌥</button>
+    <button data-mod="ctrl"  title="Control (sticky)">⌃</button>
+    <button data-mod="shift" title="Shift (sticky)">⇧</button>
+    <button data-key="esc">esc</button>
+    <button data-key="tab">⇥</button>
+    <button data-act="more" title="More">⋯</button>
+  </nav>
+
+  <!-- Extra keys row, shown while the keyboard is open -->
+  <nav id="keys">
+    <button data-key="left">←</button>
+    <button data-key="up">↑</button>
+    <button data-key="down">↓</button>
+    <button data-key="right">→</button>
+    <button data-combo="cmd+c">⌘C</button>
+    <button data-combo="cmd+v">⌘V</button>
+    <button data-combo="cmd+z">⌘Z</button>
+    <button data-combo="cmd+space">⌘␣</button>
+    <button data-combo="cmd+tab">⌘⇥</button>
+  </nav>
+
+  <!-- "More" panel -->
+  <section id="more" class="sheet hidden">
+    <div class="grid">
+      <button data-combo="ctrl+up">Mission Control</button>
+      <button data-combo="cmd+space">Spotlight</button>
+      <button data-combo="cmd+tab">App Switcher</button>
+      <button data-combo="cmd+opt+esc">Force Quit</button>
+      <button data-combo="cmd+shift+3">Screenshot</button>
+      <button data-combo="ctrl+cmd+q">Lock Mac</button>
+    </div>
+    <label class="row">Quality
+      <input id="quality" type="range" min="0" max="9" value="6">
+    </label>
+    <label class="row">Fit to screen <input id="fit" type="checkbox" checked></label>
+    <label class="row">View only <input id="viewOnly" type="checkbox"></label>
+    <div class="clip">
+      <textarea id="clipText" placeholder="Text to paste on the Mac…"></textarea>
+      <button data-act="paste">Type it on Mac</button>
+    </div>
+    <div class="grid two">
+      <button data-act="fullscreen">Fullscreen</button>
+      <button data-act="disconnect" class="danger">Disconnect</button>
+    </div>
+    <button data-act="close" class="primary">Done</button>
+  </section>
+
+  <!-- Hidden input that brings up the phone/tablet keyboard -->
+  <textarea id="kbd" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false"></textarea>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

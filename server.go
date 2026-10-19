@@ -34,6 +34,10 @@ type app struct {
 	selfDNS string // this node, e.g. mydevices.tail1234.ts.net
 	owner   string // Tailscale login of whoever signed this device in
 	allow   map[string]bool
+	auth2   *authState // passkeys (hub / standalone)
+
+	hubMu sync.Mutex
+	hubID string // pinned StableID of the hub (devices behind a hub)
 
 	mu      sync.RWMutex
 	devices map[string]*device // hub only, keyed by device name
@@ -68,6 +72,9 @@ type info struct {
 func (a *app) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /.well-known/mydevices.json", a.serveInfo)
+	if a.auth2 != nil {
+		a.authRoutes(mux)
+	}
 
 	viewer := a.viewer()
 	if a.opt.hub {
@@ -88,7 +95,61 @@ func (a *app) handler() http.Handler {
 		mux.Handle("/", viewer)
 		mux.Handle("/"+a.opt.name+"/", http.StripPrefix("/"+a.opt.name, viewer))
 	}
-	return a.auth(mux)
+	return a.auth(a.gate(mux))
+}
+
+// gate is the second layer after Tailscale identity:
+// the hub (and standalone devices) require a passkey session; devices behind a hub
+// only talk to that hub.
+func (a *app) gate(next http.Handler) http.Handler {
+	if a.auth2 != nil {
+		return a.requireSession(next)
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !a.fromHub(r) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusForbidden)
+			hub := "https://" + a.opt.via + "." + a.domain + "/" + a.opt.name + "/"
+			fmt.Fprintf(w, `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font:16px system-ui;background:#0b0d12;color:#e9ecf2;padding:40px">This device is reached through your hub: <a style="color:#4f8cff" href="%s">%s</a>`, hub, html.EscapeString(hub))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// fromHub reports whether the request comes from this device's hub. The first time
+// the hub connects, its stable node ID is pinned; after that only that exact node counts.
+func (a *app) fromHub(r *http.Request) bool {
+	if a.opt.via == "" {
+		return false
+	}
+	who, err := a.lc.WhoIs(r.Context(), r.RemoteAddr)
+	if err != nil || who.Node == nil {
+		return false
+	}
+	host, _, _ := strings.Cut(who.Node.Name, ".")
+	if host != a.opt.via {
+		return false
+	}
+	id := string(who.Node.StableID)
+	a.hubMu.Lock()
+	defer a.hubMu.Unlock()
+	pin := filepath.Join(a.opt.stateDir, a.opt.name, "hub-id")
+	if a.hubID == "" {
+		if b, err := os.ReadFile(pin); err == nil {
+			a.hubID = strings.TrimSpace(string(b))
+		}
+	}
+	if a.hubID == "" {
+		a.hubID = id
+		os.WriteFile(pin, []byte(id), 0o600)
+		log.Printf("✓ Paired with hub %s", who.Node.Name)
+	}
+	if a.hubID != id {
+		log.Printf("✗ %s claims to be the hub but isn't the one this device paired with (delete %s to re-pair)", who.Node.Name, pin)
+		return false
+	}
+	return true
 }
 
 // plainHandler serves port 80: the hub talks to devices over it (the tailnet
@@ -109,8 +170,15 @@ func (a *app) viewer() http.Handler {
 	sub, _ := fs.Sub(a.web, "viewer")
 	files := http.FileServer(http.FS(sub))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/websockify" {
+		switch r.URL.Path {
+		case "/websockify":
 			a.relayVNC(w, r)
+			return
+		case "/stream":
+			a.relayStream(w, r)
+			return
+		case "/caps":
+			writeJSON(w, map[string]any{"name": a.opt.name, "fast": a.fastAvailable(), "vnc": a.vncUp()})
 			return
 		}
 		w.Header().Set("Cache-Control", "no-cache")
@@ -339,6 +407,7 @@ func (a *app) saveKnown() {
 // ---------- hub: forwarding /<name>/ to that device ----------
 
 func (a *app) proxyToDevice(w http.ResponseWriter, r *http.Request, name string) {
+	viewer := a.viewerName(r)
 	a.mu.RLock()
 	d := a.devices[name]
 	var ip string
@@ -364,6 +433,7 @@ func (a *app) proxyToDevice(w http.ResponseWriter, r *http.Request, name string)
 			pr.SetURL(&url.URL{Scheme: "http", Host: ip})
 			pr.Out.Host = ip
 			pr.Out.Header.Set("X-Mydevices-Hub", "1")
+			pr.Out.Header.Set("X-Mydevices-Viewer", viewer)
 		},
 		Transport:     a.srv.HTTPClient().Transport,
 		FlushInterval: -1,

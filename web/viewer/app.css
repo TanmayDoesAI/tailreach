@@ -1,4 +1,4 @@
-/* Mac Remote — tweak the look here. Colors live in :root. */
+/* Mac Remote (fast viewer) — tweak the look here. Colors live in :root. */
 :root {
   --bg: #0b0d12;
   --panel: rgba(22, 25, 33, 0.92);
@@ -105,3 +105,41 @@ body:not([data-state="on"]) #bar, body:not([data-state="on"]) #keys { display: n
   position: fixed; top: 0; left: 0; width: 1px; height: 1px;
   opacity: 0; border: 0; padding: 0; resize: none; pointer-events: none;
 }
+
+/* ---------- fast viewer ---------- */
+html, body { background: #000; }
+#screen {
+  position: fixed; top: 0; left: 0;
+  transform-origin: 0 0; will-change: transform;
+  image-rendering: auto;
+}
+#surface { position: fixed; inset: 0; z-index: 5; touch-action: none; }
+
+#splash {
+  position: fixed; inset: 0; z-index: 30; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 14px; padding: 24px; text-align: center;
+  background: var(--bg); color: var(--muted); transition: opacity .25s;
+}
+body[data-state="on"] #splash { opacity: 0; pointer-events: none; }
+body[data-state="off"] .spinner { display: none; }
+#splashAction { color: var(--accent); }
+.spinner {
+  width: 28px; height: 28px; border-radius: 50%;
+  border: 3px solid rgba(255,255,255,.15); border-top-color: var(--accent);
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+select {
+  font: inherit; font-size: 16px; color: var(--text); background: rgba(255,255,255,.06);
+  border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px;
+}
+.grid.three { grid-template-columns: repeat(3, 1fr); }
+.grid.four { grid-template-columns: repeat(4, 1fr); }
+.grid.four button { min-height: 44px; font-size: 18px; }
+a.btn {
+  display: grid; place-items: center; min-height: 52px; font-size: 13px; text-align: center;
+  color: var(--text); text-decoration: none; background: var(--btn);
+  border: 1px solid var(--line); border-radius: 10px;
+}
+body:not([data-state="on"]) #bar, body:not([data-state="on"]) #keys { display: none; }

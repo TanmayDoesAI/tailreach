@@ -7,82 +7,100 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Mac">
-  <meta name="theme-color" content="#0b0d12">
+  <meta name="theme-color" content="#000000">
   <link rel="apple-touch-icon" href="novnc/app/images/icons/novnc-ios-180.png">
   <link rel="stylesheet" href="app.css">
   <title>Mac Remote</title>
 </head>
-<body>
-  <!-- The Mac screen is drawn in here by noVNC -->
-  <div id="screen"></div>
+<body data-state="off" data-mode="trackpad">
+  <!-- The remote screen. app.js pans/zooms it with a CSS transform. -->
+  <canvas id="screen"></canvas>
+  <!-- Catches all touch / mouse input on top of the screen -->
+  <div id="surface"></div>
 
-  <!-- Login: shown until connected -->
-  <form id="login" class="sheet" autocomplete="on">
-    <h1 id="loginTitle">Mac Remote</h1>
-    <a class="muted back" href="../">← All devices</a>
-    <p class="muted" id="loginMsg">Sign in with your Mac account</p>
-    <input id="user" name="username" placeholder="Mac username" autocomplete="username" autocapitalize="off" autocorrect="off">
-    <input id="pass" name="password" type="password" placeholder="Mac password" autocomplete="current-password">
-    <button type="submit" class="primary">Connect</button>
-  </form>
+  <div id="splash">
+    <div class="spinner"></div>
+    <p id="splashText">Connecting…</p>
+    <a id="splashAction" class="hidden"></a>
+  </div>
 
-  <!-- Status pill: tap to show / hide the toolbar -->
-  <button id="status" class="pill"><span class="dot"></span><span id="statusText">Disconnected</span></button>
+  <!-- Status pill: tap to hide / show the toolbar -->
+  <button id="status" class="pill"><span class="dot"></span><span id="statusText">Connecting</span></button>
 
-  <!-- Toolbar -->
   <nav id="bar">
     <button data-act="keyboard" title="Keyboard">⌨︎</button>
-    <button data-mod="cmd"   title="Command (sticky)">⌘</button>
-    <button data-mod="opt"   title="Option (sticky)">⌥</button>
-    <button data-mod="ctrl"  title="Control (sticky)">⌃</button>
-    <button data-mod="shift" title="Shift (sticky)">⇧</button>
+    <button data-act="mode" id="modeBtn" title="Trackpad / touch">◎</button>
+    <button data-mod="cmd">⌘</button>
+    <button data-mod="opt">⌥</button>
+    <button data-mod="ctrl">⌃</button>
+    <button data-mod="shift">⇧</button>
     <button data-key="esc">esc</button>
-    <button data-key="tab">⇥</button>
     <button data-act="more" title="More">⋯</button>
   </nav>
 
-  <!-- Extra keys row, shown while the keyboard is open -->
   <nav id="keys">
     <button data-key="left">←</button>
     <button data-key="up">↑</button>
     <button data-key="down">↓</button>
     <button data-key="right">→</button>
+    <button data-key="tab">⇥</button>
     <button data-combo="cmd+c">⌘C</button>
     <button data-combo="cmd+v">⌘V</button>
     <button data-combo="cmd+z">⌘Z</button>
-    <button data-combo="cmd+space">⌘␣</button>
+    <button data-combo="cmd+a">⌘A</button>
     <button data-combo="cmd+tab">⌘⇥</button>
+    <button data-combo="cmd+space">⌘␣</button>
   </nav>
 
-  <!-- "More" panel -->
   <section id="more" class="sheet hidden">
     <div class="grid">
       <button data-combo="ctrl+up">Mission Control</button>
       <button data-combo="cmd+space">Spotlight</button>
       <button data-combo="cmd+tab">App Switcher</button>
+      <button data-key="f11">Show Desktop</button>
       <button data-combo="cmd+opt+esc">Force Quit</button>
       <button data-combo="cmd+shift+3">Screenshot</button>
-      <button data-combo="ctrl+cmd+q">Lock Mac</button>
     </div>
+    <div class="grid four">
+      <button data-media="prev">⏮</button>
+      <button data-media="play">⏯</button>
+      <button data-media="next">⏭</button>
+      <button data-media="mute">🔇</button>
+      <button data-media="voldown">🔉</button>
+      <button data-media="volup">🔊</button>
+      <button data-media="brdown">🔅</button>
+      <button data-media="brup">🔆</button>
+    </div>
+
     <label class="row">Quality
-      <input id="quality" type="range" min="0" max="9" value="6">
+      <select id="quality">
+        <option value="saver">Data saver</option>
+        <option value="auto">Auto</option>
+        <option value="crisp">Crisp</option>
+      </select>
     </label>
-    <label class="row">Fit to screen <input id="fit" type="checkbox" checked></label>
-    <label class="row">View only <input id="viewOnly" type="checkbox"></label>
+    <label class="row">Frame rate
+      <select id="fps"><option value="30">30</option><option value="60">60</option></select>
+    </label>
+    <label class="row">Pointer speed <input id="speed" type="range" min="0.5" max="3" step="0.1"></label>
+    <label class="row">Natural scrolling <input id="natural" type="checkbox"></label>
+
     <div class="clip">
-      <textarea id="clipText" placeholder="Text to paste on the Mac…"></textarea>
-      <button data-act="paste">Type it on Mac</button>
+      <textarea id="clipText" placeholder="Text to type on the Mac…"></textarea>
+      <button data-act="typeText">Type it on the Mac</button>
     </div>
-    <div class="grid two">
-      <button data-act="fullscreen">Fullscreen</button>
-      <button data-act="disconnect" class="danger">Disconnect</button>
+
+    <div class="grid three">
+      <button data-combo="ctrl+cmd+q">Lock Mac</button>
+      <a class="btn" href="classic/">Unlock (VNC)</a>
+      <a class="btn" href="../">All devices</a>
     </div>
     <button data-act="close" class="primary">Done</button>
   </section>
 
-  <!-- Hidden input that brings up the phone/tablet keyboard -->
+  <!-- Hidden input that brings up the on-screen keyboard -->
   <textarea id="kbd" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false"></textarea>
 
-  <script type="module" src="app.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>

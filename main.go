@@ -42,6 +42,7 @@ type options struct {
 	stateDir string
 	webDir   string
 	allow    string
+	via      string
 	verbose  bool
 }
 
@@ -70,6 +71,7 @@ func main() {
 	flag.StringVar(&o.stateDir, "state", defaultStateDir(), "where Tailscale state is kept")
 	flag.StringVar(&o.webDir, "web-dir", "", "serve the web UI from this folder instead of the built-in copy (for hacking on the UI)")
 	flag.StringVar(&o.allow, "allow", "", "extra Tailscale logins allowed in, comma-separated (default: only the owner)")
+	flag.StringVar(&o.via, "via", "mydevices", "devices: only accept connections through this hub (\"\" = standalone, with its own Face ID login)")
 	flag.BoolVar(&o.verbose, "v", false, "verbose Tailscale logs")
 	flag.Usage = usage
 	flag.Parse()
@@ -85,7 +87,9 @@ func run(o options) error {
 	hostname := o.name
 	if o.hub {
 		hostname = sanitizeName(o.hubName)
+		o.via = ""
 	}
+	o.via = sanitizeName(o.via)
 
 	srv := &tsnet.Server{
 		Hostname: hostname,
@@ -123,12 +127,28 @@ func run(o options) error {
 		allow:   map[string]bool{},
 		devices: map[string]*device{},
 	}
-	if u, ok := st.User[st.Self.UserID]; ok {
-		a.owner = u.LoginName
+	// Up's status can come back without the user table; ask again until we know the owner.
+	for i := 0; i < 50 && a.owner == ""; i++ {
+		if full, err := lc.Status(ctx); err == nil {
+			if u, ok := full.User[full.Self.UserID]; ok {
+				a.owner = u.LoginName
+			}
+		}
+		if a.owner == "" {
+			time.Sleep(200 * time.Millisecond)
+		}
+	}
+	if a.owner == "" {
+		return fmt.Errorf("couldn't determine which Tailscale user owns this device")
 	}
 	for _, l := range strings.Split(o.allow, ",") {
 		if l = strings.TrimSpace(l); l != "" {
 			a.allow[l] = true
+		}
+	}
+	if o.hub || o.via == "" {
+		if a.auth2, err = newAuth(a.selfDNS, filepath.Join(o.stateDir, hostname), a.owner); err != nil {
+			return err
 		}
 	}
 	if o.webDir != "" {
