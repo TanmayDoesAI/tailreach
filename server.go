@@ -13,6 +13,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -35,6 +36,7 @@ type app struct {
 	owner   string // Tailscale login of whoever signed this device in
 	allow   map[string]bool
 	auth2   *authState // passkeys (hub / standalone)
+	sec     *security  // device password + trusted devices
 
 	hubMu sync.Mutex
 	hubID string // pinned StableID of the hub (devices behind a hub)
@@ -178,7 +180,7 @@ func (a *app) viewer() http.Handler {
 			a.relayStream(w, r)
 			return
 		case "/caps":
-			writeJSON(w, map[string]any{"name": a.opt.name, "fast": a.fastAvailable(), "vnc": a.vncUp()})
+			writeJSON(w, map[string]any{"name": a.opt.name, "fast": a.fastAvailable(), "vnc": a.vncUp(), "user": consoleUser()})
 			return
 		}
 		w.Header().Set("Cache-Control", "no-cache")
@@ -248,22 +250,24 @@ func (a *app) relayVNC(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tcp.Close()
 
-	who := "?"
-	if wi, err := a.lc.WhoIs(r.Context(), r.RemoteAddr); err == nil && wi.Node != nil {
-		who = wi.Node.ComputedName
-	}
-	log.Printf("▶ screen session started (via %s)", who)
+	who := a.viewerName(r)
+	log.Printf("▶ VNC session started for %s", who)
+	a.audit("vnc-start", who, "")
+	notify("Screen is being viewed (VNC)", "from "+who)
 	start := time.Now()
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
+	defer trackSession("vnc", who, cancel, false)()
+	go func() { <-ctx.Done(); tcp.Close() }()
 	conn := websocket.NetConn(ctx, ws, websocket.MessageBinary)
 	go func() {
 		io.Copy(conn, tcp)
 		cancel()
 	}()
 	io.Copy(tcp, conn)
-	log.Printf("■ screen session ended after %s", time.Since(start).Round(time.Second))
+	log.Printf("■ VNC session ended after %s", time.Since(start).Round(time.Second))
+	a.audit("vnc-end", who, time.Since(start).Round(time.Second).String())
 }
 
 func (a *app) vncUp() bool {
@@ -442,4 +446,12 @@ func (a *app) proxyToDevice(w http.ResponseWriter, r *http.Request, name string)
 		},
 	}
 	rp.ServeHTTP(w, r)
+}
+
+// consoleUser is the macOS account name, used to unlock the lock screen over Screen Sharing.
+func consoleUser() string {
+	if u, err := user.Current(); err == nil {
+		return u.Username
+	}
+	return ""
 }

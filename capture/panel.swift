@@ -1,0 +1,93 @@
+// The small "Screen shared" panel shown at the top right of the Mac while a viewer is
+// connected. It's left out of the stream, so only the person at the Mac sees it.
+import AppKit
+import Combine
+import SwiftUI
+
+final class SharePanel {
+    private let panel: NSPanel
+
+    init(viewer: String, onStop: @escaping () -> Void) {
+        let size = NSSize(width: 300, height: 64)
+        let host = FirstClickHostingView(rootView: SharePanelView(viewer: viewer, started: Date(), onStop: onStop))
+        host.frame = NSRect(origin: .zero, size: size)
+
+        panel = NSPanel(contentRect: host.frame, styleMask: [.nonactivatingPanel, .borderless],
+                        backing: .buffered, defer: false)
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.level = .statusBar
+        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
+        panel.isMovableByWindowBackground = true // drag it anywhere
+        panel.hidesOnDeactivate = false
+        panel.contentView = host
+
+        if let f = NSScreen.main?.visibleFrame {
+            panel.setFrameOrigin(NSPoint(x: f.maxX - size.width - 12, y: f.maxY - size.height - 12))
+        }
+        panel.orderFrontRegardless()
+    }
+}
+
+/// Lets the Stop button work on the first click without activating anything.
+final class FirstClickHostingView<V: View>: NSHostingView<V> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
+/// Ticks once a second for the elapsed-time label. (A model object rather than @State,
+/// which needs SwiftUI macro plugins that only ship with full Xcode.)
+final class PanelClock: ObservableObject {
+    @Published var now = Date()
+    @Published var pulse = false
+    private var timer: Timer?
+
+    init() {
+        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.now = Date() }
+        DispatchQueue.main.async { self.pulse = true }
+    }
+}
+
+struct SharePanelView: View {
+    let viewer: String
+    let started: Date
+    let onStop: () -> Void
+    @ObservedObject private var clock = PanelClock()
+
+    private var now: Date { clock.now }
+    private var pulse: Bool { clock.pulse }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Circle()
+                .fill(Color.red)
+                .frame(width: 10, height: 10)
+                .opacity(pulse ? 0.35 : 1)
+                .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: pulse)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Screen shared").font(.system(size: 13, weight: .semibold))
+                Text("\(viewer) · \(elapsed)")
+                    .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            Button(action: onStop) {
+                Text("Stop")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14).padding(.vertical, 6)
+                    .background(Color.red, in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .help("End this remote session")
+        }
+        .padding(.horizontal, 14)
+        .frame(width: 300, height: 64)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(.white.opacity(0.08)))
+    }
+
+    private var elapsed: String {
+        let s = max(0, Int(now.timeIntervalSince(started)))
+        return s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60) : String(format: "%d:%02d", s / 60, s % 60)
+    }
+}

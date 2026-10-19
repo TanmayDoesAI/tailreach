@@ -16,7 +16,7 @@ local: capture
 	CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o mydevices .
 
 capture:
-	swiftc -O -swift-version 5 capture/main.swift -o mydevices-capture
+	swiftc -O -swift-version 5 capture/*.swift -o mydevices-capture
 
 # Live UI hacking: edit files in web/ and refresh the browser
 run:

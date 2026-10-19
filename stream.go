@@ -36,12 +36,7 @@ const (
 // Commands a browser may send through to the capture helper.
 var allowedCmds = map[string]bool{
 	"start": true, "kf": true, "abs": true, "rel": true, "btn": true, "click": true,
-	"scroll": true, "key": true, "text": true, "media": true,
-}
-
-var activeStream struct {
-	sync.Mutex
-	cancel context.CancelFunc
+	"scroll": true, "key": true, "text": true, "media": true, "clip-set": true, "clip-get": true,
 }
 
 func helperPath() string {
@@ -82,20 +77,20 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 	// One viewer at a time: a new session replaces the old one.
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
-	activeStream.Lock()
-	if activeStream.cancel != nil {
-		activeStream.cancel()
-	}
-	activeStream.cancel = cancel
-	activeStream.Unlock()
-
 	viewer := a.viewerName(r)
-	log.Printf("▶ stream started for %s", viewer)
-	notify("Screen is being viewed", "from "+viewer)
-	start := time.Now()
-	defer func() { log.Printf("■ stream ended for %s after %s", viewer, time.Since(start).Round(time.Second)) }()
+	defer trackSession("stream", viewer, cancel, true)()
+	go func() { <-ctx.Done(); ws.CloseNow() }()
 
-	cmd := exec.CommandContext(ctx, helperPath())
+	log.Printf("▶ stream started for %s", viewer)
+	a.audit("stream-start", viewer, "")
+	start := time.Now()
+	defer func() {
+		log.Printf("■ stream ended for %s after %s", viewer, time.Since(start).Round(time.Second))
+		a.audit("stream-end", viewer, time.Since(start).Round(time.Second).String())
+	}()
+
+	// The helper shows the "screen is shared" panel on the Mac for as long as it runs.
+	cmd := exec.CommandContext(ctx, helperPath(), "--viewer", viewer)
 	stdin, _ := cmd.StdinPipe()
 	stdout, _ := cmd.StdoutPipe()
 	cmd.Stderr = os.Stderr
@@ -146,6 +141,11 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 			}
 			switch hdr[4] {
 			case 3: // JSON event
+				var ev struct{ T string }
+				if json.Unmarshal(buf[1:], &ev) == nil && ev.T == "stop-request" {
+					log.Printf("■ stopped from the Mac")
+					return // Stop pressed on the Mac's panel
+				}
 				out <- outMsg{typ: websocket.MessageText, data: buf[1:]}
 			case 1: // decoder config: never dropped
 				out <- outMsg{typ: websocket.MessageBinary, data: buf}
@@ -252,7 +252,11 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 			c["br"] = min(bitrate.Load(), maxBitrate.Load())
 			toHelper(c)
 		case allowedCmds[t]:
-			if s, ok := c["s"].(string); ok && len(s) > 4096 {
+			limit := 4096
+			if t == "clip-set" {
+				limit = 256 << 10
+			}
+			if s, ok := c["s"].(string); ok && len(s) > limit {
 				continue
 			}
 			toHelper(c)

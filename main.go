@@ -12,10 +12,12 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -25,6 +27,7 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/term"
 	"tailscale.com/client/local"
 	"tailscale.com/tsnet"
 )
@@ -56,6 +59,12 @@ func main() {
 			return
 		case "uninstall":
 			exitOn(uninstall())
+			return
+		case "password":
+			exitOn(passwordCmd(os.Args[2:]))
+			return
+		case "settings":
+			exitOn(openSettings(os.Args[2:]))
 			return
 		case "version":
 			fmt.Println(version)
@@ -146,6 +155,9 @@ func run(o options) error {
 			a.allow[l] = true
 		}
 	}
+	a.sec = newSecurity(filepath.Join(o.stateDir, hostname))
+	a.sec.applyKeepAwake()
+	go a.serveControl()
 	if o.hub || o.via == "" {
 		if a.auth2, err = newAuth(a.selfDNS, filepath.Join(o.stateDir, hostname), a.owner); err != nil {
 			return err
@@ -222,6 +234,8 @@ Usage:
   mydevices --hub [flags]        also serve the dashboard at https://mydevices.<tailnet>.ts.net/
   mydevices install [flags]      start automatically at login (macOS), same flags as above
   mydevices uninstall            stop and remove the login item
+  mydevices settings             open the settings window on this Mac (password, trusted devices, sessions)
+  mydevices password             set or reset the device password from a terminal (--off turns it off)
 
 Flags:
 `, version)
@@ -273,4 +287,61 @@ func exitOn(err error) {
 		fmt.Fprintln(os.Stderr, "mydevices:", err)
 		os.Exit(1)
 	}
+}
+
+// openSettings opens the native settings window, talking to the running mydevices over its local socket.
+func openSettings(args []string) error {
+	fs := flag.NewFlagSet("settings", flag.ExitOnError)
+	state := fs.String("state", defaultStateDir(), "state directory of the running mydevices")
+	fs.Parse(args)
+	sock := controlSocketPath(*state)
+	if _, err := os.Stat(sock); err != nil {
+		return fmt.Errorf("mydevices isn't running (no %s)", sock)
+	}
+	cmd := exec.Command(helperPath(), "--settings", sock)
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	return cmd.Run()
+}
+
+// passwordCmd sets, resets or turns off the device password via the running mydevices.
+func passwordCmd(args []string) error {
+	fs := flag.NewFlagSet("password", flag.ExitOnError)
+	state := fs.String("state", defaultStateDir(), "state directory of the running mydevices")
+	off := fs.Bool("off", false, "turn the password off")
+	fs.Parse(args)
+	req := map[string]any{"op": "enablePassword", "enabled": false}
+	if !*off {
+		fmt.Print("New device password (8+ characters): ")
+		p1, err := term.ReadPassword(int(os.Stdin.Fd()))
+		fmt.Println()
+		if err != nil {
+			return err
+		}
+		fmt.Print("Again: ")
+		p2, _ := term.ReadPassword(int(os.Stdin.Fd()))
+		fmt.Println()
+		if string(p1) != string(p2) {
+			return fmt.Errorf("passwords don't match")
+		}
+		req = map[string]any{"op": "setPassword", "password": string(p1)}
+	}
+	c, err := net.Dial("unix", controlSocketPath(*state))
+	if err != nil {
+		return fmt.Errorf("mydevices isn't running: %v", err)
+	}
+	defer c.Close()
+	json.NewEncoder(c).Encode(req)
+	var reply map[string]any
+	if err := json.NewDecoder(c).Decode(&reply); err != nil {
+		return err
+	}
+	if e, ok := reply["error"].(string); ok {
+		return errors.New(e)
+	}
+	if *off {
+		fmt.Println("✓ Password turned off")
+	} else {
+		fmt.Println("✓ Password set. Every device will be asked for it again (then trusted for 30 days).")
+	}
+	return nil
 }

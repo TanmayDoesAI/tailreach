@@ -35,6 +35,13 @@
   <h1>My Devices</h1>
   <p id="who"></p>
 
+  <!-- Device password: once every 30 days per device -->
+  <form id="password" class="hidden" style="display:flex;flex-direction:column;gap:12px">
+    <p>Enter the device password. This device will be remembered for 30 days.</p>
+    <input id="pw" type="password" autocomplete="current-password" placeholder="Password" style="letter-spacing:normal">
+    <button type="submit">Continue</button>
+  </form>
+
   <!-- Returning device -->
   <section id="signin" class="hidden">
     <button id="signinBtn">Unlock with passkey</button>
@@ -93,7 +100,7 @@
   }
 
   function show(id) {
-    for (const s of ['signin', 'pair']) $('#' + s).classList.toggle('hidden', s !== id);
+    for (const s of ['password', 'signin', 'pair']) $('#' + s).classList.toggle('hidden', s !== id);
     $('#err').textContent = '';
   }
   const fail = (e) => { $('#err').textContent = e.name === 'NotAllowedError' ? 'Cancelled.' : e.message; };
@@ -131,13 +138,29 @@
     } catch (e) { fail(e); }
   };
 
-  (async () => {
-    if (!window.PublicKeyCredential) { $('#err').textContent = 'This browser doesn’t support passkeys.'; return; }
+  $('#password').onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      await post('auth/password', { password: $('#pw').value });
+      $('#pw').value = '';
+      route();
+    } catch (err) { fail(err); }
+  };
+
+  async function route() {
     const st = await (await fetch('auth/status', { cache: 'no-store' })).json();
     $('#who').textContent = st.owner;
     if (st.authed) return location.replace(safeNext);
+    if (st.needPassword) { show('password'); $('#pw').focus(); return; }
+    if (!st.codeNeeded) {   // the device password already proved it's you: no code needed
+      $('#pairHint').textContent = 'Create a passkey so next time it’s just Face ID.';
+      $('#codeBtn').classList.add('hidden');
+      $('#registerBtn').classList.remove('hidden');
+    }
+    if (!window.PublicKeyCredential) { $('#err').textContent = 'This browser doesn’t support passkeys.'; return; }
     show(st.registered ? 'signin' : 'pair');
-  })();
+  }
+  route();
 </script>
 </body>
 </html>

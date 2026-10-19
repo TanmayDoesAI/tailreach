@@ -143,3 +143,26 @@ a.btn {
   border: 1px solid var(--line); border-radius: 10px;
 }
 body:not([data-state="on"]) #bar, body:not([data-state="on"]) #keys { display: none; }
+
+/* Clipboard toast */
+#toast {
+  position: fixed; top: calc(48px + var(--safe-t)); left: 50%; transform: translateX(-50%); z-index: 25;
+  display: flex; align-items: center; gap: 8px; max-width: calc(100% - 32px);
+  padding: 6px 6px 6px 14px; border-radius: 14px; font-size: 13px;
+  background: var(--panel); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--line);
+}
+#toastText { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+#toast button { min-height: 32px; flex: none; }
+#toast .x { background: none; border: 0; color: var(--muted); }
+.grid.two button { font-size: 13px; }
+
+/* Lock screen */
+#unlock { top: 50%; transform: translate(-50%, -50%); z-index: 40; text-align: center; }
+#unlock .lockIcon {
+  width: 56px; height: 56px; margin: 0 auto; border-radius: 18px; display: grid; place-items: center;
+  background: rgba(79,140,255,.14); color: var(--accent);
+}
+#unlock .err { color: var(--bad); margin: 0; min-height: 1.2em; }
+body.locked #splash { opacity: 0; pointer-events: none; }
+body.locked #screen { filter: blur(12px) brightness(.5); }

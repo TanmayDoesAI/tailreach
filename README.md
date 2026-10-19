@@ -39,19 +39,32 @@ Every request has to pass all of these layers:
 
 1. **Tailnet only.** Nothing listens on your LAN or the internet.
 2. **Owner only.** Every connection is identified with Tailscale `WhoIs`. Only the Tailscale user who signed the device in gets through (`--allow` adds others), and tagged devices are rejected.
-3. **Passkey (Face ID / Touch ID).** The hub requires a passkey session.
-   - A new phone or tablet can only enrol with a 6-digit code that appears on the Mac. The code is single-use, expires after 5 minutes and allows 5 tries.
+3. **Device password (yours, set on the Mac).** Each phone, tablet or computer enters it once, then is trusted for 30 days.
+   - Trust is tied to that device's Tailscale identity, so a copied cookie doesn't work anywhere else.
+   - Five wrong tries lock it for 15 minutes and send a notification to the Mac.
+   - Set or reset it in the settings window (`./mydevices settings`) or from a terminal (`./mydevices password`; add `--off` to turn it off).
+4. **Passkey (Face ID / Touch ID).** Opening a session takes one Face ID prompt.
+   - A new device adds its passkey after entering the device password. With no password set, it needs a 6-digit code shown on the Mac instead.
    - Sessions are HttpOnly, Secure, SameSite=Strict cookies. They expire after 12 h, or after 1 h idle.
-4. **Hub pinning.** Devices behind a hub only accept connections from that one hub. The hub's node ID is pinned the first time it connects, so another machine on your tailnet can't pose as it.
-5. **Origin checks.** Only pages from your tailnet can open screen sockets, and sign-in requests must come from the hub's own origin.
-6. **You see every session.** A macOS notification appears when someone starts viewing or adds a passkey. macOS also shows its screen-recording indicator while a stream is active. Everything is written to `~/Library/Application Support/mydevices/audit.log`.
-7. **One viewer at a time.** A new session ends the previous one.
+5. **Hub pinning.** Devices behind a hub only accept connections from that one hub. The hub's node ID is pinned the first time it connects, so another machine on your tailnet can't pose as it.
+6. **Origin checks.** Only pages from your tailnet can open screen sockets, and sign-in requests must come from the hub's own origin.
+7. **You see every session.** A **"Screen shared" panel** sits at the top right of the Mac while someone is connected. It shows who and for how long, and has a **Stop** button. The panel is left out of the stream.
+   - macOS also shows its screen-recording indicator, and notifications cover new passkeys and trusted devices. Everything is written to `~/Library/Application Support/mydevices/audit.log`.
+8. **Settings only on the Mac.** The settings window talks to mydevices over a Unix socket that only your macOS user can open. Nothing about settings is reachable over the network.
+9. **Screen and input only.** Viewers can see the screen, point, type, scroll and use the clipboard (secrets copied from password managers are never sent). There is no way to run commands, browse files or start background processes. The screen helper only exists during a session.
+10. **One viewer at a time.** A new session ends the previous one.
 
 To reset passkeys, delete `~/Library/Application Support/mydevices/mydevices/passkeys.json` and restart.
 
 **Permissions (first run on each Mac):** System Settings → Privacy & Security. Allow **Screen Recording** and **Accessibility** for `mydevices` (or for your terminal app, if you run it from a terminal).
 
 Tip: in the Tailscale admin console's Access Controls, you can also limit which of your devices may reach `mydevices`.
+
+## Lock screen, sleep and restarts
+
+- **Locked Mac:** your phone shows "Mac is locked". Type the Mac password and it's entered on the real lock screen through the Mac's own Screen Sharing. The fast stream then resumes. Screen Sharing must be on.
+- **Sleep:** turn on *Keep this Mac reachable while plugged in* in settings. The display still sleeps, but the Mac stays online.
+- **Restart:** with FileVault on, the Mac waits at the disk-unlock screen before anything starts, so no remote tool can reach it. Someone has to type the password there once. Then mydevices starts on its own, if it's installed with `./mydevices install …`. For restarts you plan, `sudo fdesetup authrestart` skips that screen once.
 
 ## Use it
 

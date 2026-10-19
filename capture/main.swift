@@ -1,6 +1,10 @@
-// mydevices-capture — streams this Mac's screen as low-latency H.264 and injects input.
+// mydevices-capture — the native half of mydevices on macOS.
 //
-// Spawned by `mydevices` for each viewer session.
+//   mydevices-capture --viewer NAME     one viewer session: streams the screen as low-latency
+//                                       H.264, injects input, shows the "screen shared" panel
+//   mydevices-capture --settings SOCK   the settings window (see settings.swift)
+//
+// Session mode is spawned by `mydevices` for each viewer and exits when the session ends.
 //   stdout: frames  [u32 big-endian length][u8 type][payload]
 //             type 1 = decoder config: [u16 json length][json {codec,w,h}][avcC]
 //             type 2 = video:          [u8 keyframe][u64 timestamp µs][AVCC NAL units]
@@ -8,6 +12,7 @@
 //   stdin:   one JSON command per line (see `handle(_:)`)
 import AppKit
 import ApplicationServices
+import SwiftUI
 import CoreMedia
 import Foundation
 import ScreenCaptureKit
@@ -160,7 +165,13 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
                 event(["t": "error", "msg": "no display"])
                 return
             }
-            let filter = SCContentFilter(display: d, excludingWindows: [])
+            // Leave our own "screen shared" panel out of the stream.
+            let filter: SCContentFilter
+            if let me = content.applications.first(where: { $0.processID == getpid() }) {
+                filter = SCContentFilter(display: d, excludingApplications: [me], exceptingWindows: [])
+            } else {
+                filter = SCContentFilter(display: d, excludingWindows: [])
+            }
             let scale = Double(filter.pointPixelScale)
             let nativeW = Double(filter.contentRect.width) * scale
             let nativeH = Double(filter.contentRect.height) * scale
@@ -403,8 +414,85 @@ func handle(_ c: [String: Any]) {
     case "key": inputQ.async { input.key(c["k"] as? String ?? "", mods: mods) }
     case "text": inputQ.async { input.type(c["s"] as? String ?? "") }
     case "media": inputQ.async { input.media(c["k"] as? String ?? "") }
+    case "clip-set": DispatchQueue.main.async { clipboard.set(c["s"] as? String ?? "") }
+    case "clip-get": DispatchQueue.main.async { clipboard.send(auto: false) }
     default: break
     }
+}
+
+// MARK: - Clipboard
+
+final class Clipboard {
+    private let pb = NSPasteboard.general
+    private var lastCount: Int
+    private var timer: Timer?
+
+    init() {
+        lastCount = pb.changeCount
+        // Tell the viewer when something new is copied on the Mac.
+        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            guard let self, self.pb.changeCount != self.lastCount else { return }
+            self.lastCount = self.pb.changeCount
+            self.send(auto: true)
+        }
+    }
+
+    func set(_ s: String) {
+        pb.clearContents()
+        pb.setString(s, forType: .string)
+        lastCount = pb.changeCount
+    }
+
+    func send(auto: Bool) {
+        // Never forward secrets that password managers mark as concealed or transient.
+        let types = pb.types ?? []
+        if types.contains(NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"))
+            || types.contains(NSPasteboard.PasteboardType("org.nspasteboard.TransientType")) { return }
+        guard let s = pb.string(forType: .string), !s.isEmpty else { return }
+        event(["t": "clip", "s": String(s.prefix(256 * 1024)), "auto": auto])
+    }
+}
+
+// MARK: - Lock screen
+
+/// Reports when the Mac locks or unlocks, so the viewer can offer to unlock it.
+final class LockWatcher {
+    private var last: Bool?
+    private var timer: Timer?
+
+    init() {
+        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.check() }
+        check()
+    }
+
+    private func check() {
+        let d = CGSessionCopyCurrentDictionary() as? [String: Any]
+        let locked = (d?["CGSSessionScreenIsLocked"] as? Bool) ?? false
+        if locked != last {
+            last = locked
+            event(["t": "lock", "locked": locked])
+        }
+    }
+}
+
+// MARK: - Entry
+
+let args = CommandLine.arguments
+func arg(_ name: String) -> String? {
+    guard let i = args.firstIndex(of: name), i + 1 < args.count else { return nil }
+    return args[i + 1]
+}
+
+if let sock = arg("--settings") {
+    runSettings(socketPath: sock) // never returns
+}
+
+let app = NSApplication.shared
+app.setActivationPolicy(.accessory) // no Dock icon, no menu bar
+let clipboard = Clipboard()
+let lockWatcher = LockWatcher()
+let panel = SharePanel(viewer: arg("--viewer") ?? "a device") {
+    event(["t": "stop-request"]) // mydevices ends the session, which ends this process
 }
 
 // Ask for permissions up front so macOS lists this helper in System Settings.
@@ -422,4 +510,4 @@ Thread {
     exit(0) // stdin closed: session over
 }.start()
 
-dispatchMain()
+app.run()

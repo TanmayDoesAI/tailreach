@@ -147,8 +147,10 @@ func (a *app) authRoutes(mux *http.ServeMux) {
 		a.auth2.mu.Lock()
 		registered := len(a.auth2.user.Creds) > 0
 		a.auth2.mu.Unlock()
-		writeJSON(w, map[string]any{"registered": registered, "authed": a.auth2.valid(r), "owner": a.owner})
+		needPw := !a.passwordOK(r)
+		writeJSON(w, map[string]any{"registered": registered, "authed": !needPw && a.auth2.valid(r), "needPassword": needPw, "codeNeeded": !a.sec.required(), "owner": a.owner})
 	})
+	mux.HandleFunc("POST /auth/password", a.passwordLogin)
 	mux.HandleFunc("POST /auth/pair", a.pairRequest)
 	mux.HandleFunc("POST /auth/register/begin", a.registerBegin)
 	mux.HandleFunc("POST /auth/register/finish", a.registerFinish)
@@ -169,7 +171,7 @@ func (a *app) authRoutes(mux *http.ServeMux) {
 func (a *app) requireSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
-		if p == "/login" || strings.HasPrefix(p, "/auth/") || strings.HasPrefix(p, "/.well-known/") || a.auth2.valid(r) {
+		if p == "/login" || strings.HasPrefix(p, "/auth/") || strings.HasPrefix(p, "/.well-known/") || (a.passwordOK(r) && a.auth2.valid(r)) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -191,6 +193,10 @@ func (a *app) pairRequest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad origin", http.StatusForbidden)
 		return
 	}
+	if !a.passwordOK(r) {
+		http.Error(w, "enter the device password first", http.StatusForbidden)
+		return
+	}
 	n, _ := rand.Int(rand.Reader, big.NewInt(1_000_000))
 	code := fmt.Sprintf("%06d", n.Int64())
 	s := a.auth2
@@ -209,18 +215,27 @@ func (a *app) registerBegin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad origin", http.StatusForbidden)
 		return
 	}
+	if !a.passwordOK(r) {
+		http.Error(w, "enter the device password first", http.StatusForbidden)
+		return
+	}
 	var body struct{ Code string }
 	json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&body)
 	s := a.auth2
-	s.mu.Lock()
-	ok := s.pairCode != "" && time.Now().Before(s.pairExp) && s.pairLeft > 0 && body.Code == s.pairCode
-	if !ok && s.pairLeft > 0 {
-		s.pairLeft--
+	// With a device password set, entering it (checked above) is enough to add a passkey,
+	// so you can get in from a new phone without anyone at the Mac.
+	ok := a.sec.required()
+	if !ok {
+		s.mu.Lock()
+		ok = s.pairCode != "" && time.Now().Before(s.pairExp) && s.pairLeft > 0 && body.Code == s.pairCode
+		if !ok && s.pairLeft > 0 {
+			s.pairLeft--
+		}
+		if ok {
+			s.pairCode = "" // single use
+		}
+		s.mu.Unlock()
 	}
-	if ok {
-		s.pairCode = "" // single use
-	}
-	s.mu.Unlock()
 	if !ok {
 		a.audit("pair-failed", a.viewerName(r), "")
 		http.Error(w, "wrong or expired code", http.StatusForbidden)
@@ -285,6 +300,10 @@ func (a *app) registerFinish(w http.ResponseWriter, r *http.Request) {
 func (a *app) loginBegin(w http.ResponseWriter, r *http.Request) {
 	if !a.sameOrigin(r) {
 		http.Error(w, "bad origin", http.StatusForbidden)
+		return
+	}
+	if !a.passwordOK(r) {
+		http.Error(w, "enter the device password first", http.StatusForbidden)
 		return
 	}
 	s := a.auth2

@@ -24,6 +24,20 @@
     <a id="splashAction" class="hidden"></a>
   </div>
 
+  <!-- Shown while the Mac is locked: your password is typed into the real lock screen -->
+  <form id="unlock" class="sheet hidden" autocomplete="on">
+    <div class="lockIcon">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+    </div>
+    <h1>Mac is locked</h1>
+    <p class="muted">Enter the Mac password for <b id="macUser"></b> to unlock it.</p>
+    <input id="macUserField" name="username" autocomplete="username" class="hidden">
+    <input id="macPw" name="password" type="password" autocomplete="current-password" placeholder="Mac password">
+    <button type="submit" class="primary" id="unlockBtn">Unlock</button>
+    <p class="err" id="unlockErr"></p>
+    <a class="muted" href="classic/">Show the lock screen instead</a>
+  </form>
+
   <!-- Status pill: tap to hide / show the toolbar -->
   <button id="status" class="pill"><span class="dot"></span><span id="statusText">Connecting</span></button>
 
@@ -85,9 +99,20 @@
     <label class="row">Pointer speed <input id="speed" type="range" min="0.5" max="3" step="0.1"></label>
     <label class="row">Natural scrolling <input id="natural" type="checkbox"></label>
 
+    <div class="grid two">
+      <button data-act="pasteToMac">Paste phone clipboard → Mac</button>
+      <button data-act="copyFromMac">Copy Mac clipboard → phone</button>
+    </div>
     <div class="clip">
       <textarea id="clipText" placeholder="Text to type on the Mac…"></textarea>
-      <button data-act="typeText">Type it on the Mac</button>
+      <div class="grid two">
+        <button data-act="typeText">Type it on the Mac</button>
+        <button data-act="sendClip">Put on Mac clipboard</button>
+      </div>
+    </div>
+    <div class="grid two">
+      <button data-act="fit">Fit to screen</button>
+      <button data-act="fillScreen">Fill screen</button>
     </div>
 
     <div class="grid three">
@@ -97,6 +122,9 @@
     </div>
     <button data-act="close" class="primary">Done</button>
   </section>
+
+  <!-- Shown when something is copied on the Mac -->
+  <div id="toast" class="hidden"><span id="toastText"></span><button data-act="toastCopy">Copy</button><button data-act="toastClose" class="x">✕</button></div>
 
   <!-- Hidden input that brings up the on-screen keyboard -->
   <textarea id="kbd" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false"></textarea>

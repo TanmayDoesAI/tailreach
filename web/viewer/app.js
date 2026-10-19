@@ -33,6 +33,8 @@ const ctx2d = canvas.getContext('2d', { alpha: false, desynchronized: true });
 const surface = $('#surface');
 
 let ws = null;
+let caps = {};
+let locked = false;
 let decoder = null;
 let waitKey = true;
 let retry = 0;
@@ -60,7 +62,9 @@ async function boot() {
     return;
   }
   try {
-    const caps = await (await fetch('caps', { cache: 'no-store' })).json();
+    caps = await (await fetch('caps', { cache: 'no-store' })).json();
+    $('#macUser').textContent = caps.user;
+    $('#macUserField').value = caps.user;
     document.title = `${caps.name} — Mac Remote`;
     if (!caps.fast) { location.replace('classic/'); return; }
   } catch {
@@ -167,12 +171,15 @@ function onEvent(ev) {
     case 'cursor': cursor.x = ev.x; cursor.y = ev.y; followCursor(); break;
     case 'stats': stats.kbps = ev.kbps; break;
     case 'pong': stats.rtt = Math.round(performance.now() - ev.at); break;
+    case 'lock': setLocked(ev.locked); break;
     case 'error':
+      if (locked) break;   // capture pauses while the Mac is locked; that's expected
       setState('off', ev.needsPermission
         ? 'Allow Screen Recording for mydevices-capture on the Mac (System Settings → Privacy & Security).'
         : `Mac: ${ev.msg}`);
       break;
     case 'warn': console.warn(ev.msg); break;
+    case 'clip': onMacClipboard(ev); break;
   }
 }
 
@@ -183,6 +190,80 @@ setInterval(() => {
     $('#statusText').textContent = `${stats.rtt} ms · ${stats.fps} fps · ${(stats.kbps / 1000).toFixed(1)} Mbps`;
   }
 }, 1000);
+
+// ---------- lock screen ----------
+// Capture and simulated typing can't reach macOS's lock screen, but the Mac's own
+// Screen Sharing can. So: sign in to Screen Sharing (over the same tailnet-only
+// connection), type the password into the lock screen, hang up, resume the fast stream.
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function setLocked(v) {
+  const wasLocked = locked;
+  locked = v;
+  document.body.classList.toggle('locked', v);
+  $('#unlock').classList.toggle('hidden', !v);
+  if (v) {
+    $('#unlockErr').textContent = '';
+    kbd.blur();
+  } else if (wasLocked) {
+    ws?.close();   // fresh capture of the unlocked desktop (reconnects right away)
+  }
+}
+
+async function unlockMac(password) {
+  const [{ default: RFB }, { default: KeyTable }, { default: keysyms }] = await Promise.all([
+    import('./novnc/core/rfb.js'), import('./novnc/core/input/keysym.js'), import('./novnc/core/input/keysymdef.js'),
+  ]);
+  const holder = document.createElement('div');
+  holder.style.cssText = 'position:fixed;left:-10px;top:-10px;width:1px;height:1px;overflow:hidden';
+  document.body.append(holder);
+  const url = new URL('websockify', location.href);
+  url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+
+  await new Promise((resolve, reject) => {
+    const rfb = new RFB(holder, url.href, { credentials: { username: caps.user, password } });
+    let settled = false;
+    const finish = (err) => {
+      if (settled) return;
+      settled = true;
+      try { rfb.disconnect(); } catch {}
+      holder.remove();
+      err ? reject(err) : resolve();
+    };
+    rfb.addEventListener('securityfailure', () => finish(new Error('Wrong password.')));
+    rfb.addEventListener('credentialsrequired', () => finish(new Error('Wrong password.')));
+    rfb.addEventListener('disconnect', () => finish(new Error('Screen Sharing is off on the Mac, so it can’t be unlocked remotely.')));
+    rfb.addEventListener('connect', async () => {
+      rfb.sendKey(KeyTable.XK_Shift_L, 'ShiftLeft');   // wake the display, reveal the password field
+      await sleep(900);
+      for (const ch of password) rfb.sendKey(keysyms.lookup(ch.codePointAt(0)));
+      rfb.sendKey(KeyTable.XK_Return, 'Enter');
+      await sleep(1200);
+      finish();
+    });
+    setTimeout(() => finish(new Error('The Mac didn’t answer.')), 15000);
+  });
+}
+
+$('#unlock').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const pw = $('#macPw').value;
+  if (!pw) return;
+  $('#unlockBtn').disabled = true;
+  $('#unlockBtn').textContent = 'Unlocking…';
+  $('#unlockErr').textContent = '';
+  try {
+    await unlockMac(pw);
+    for (let i = 0; i < 20 && locked; i++) await sleep(250);   // wait for the Mac to report it
+    if (locked) $('#unlockErr').textContent = 'Still locked. Check the password and try again.';
+  } catch (err) {
+    $('#unlockErr').textContent = err.message;
+  } finally {
+    $('#macPw').value = '';
+    $('#unlockBtn').disabled = false;
+    $('#unlockBtn').textContent = 'Unlock';
+  }
+});
 
 // ---------- view: fit, zoom and pan ----------
 const view = { z: 1, x: 0, y: 0 };   // zoom factor and top-left offset in CSS px
@@ -481,6 +562,54 @@ if (window.visualViewport) {
   visualViewport.addEventListener('scroll', fit);
 }
 
+// ---------- clipboard ----------
+// iOS only lets a page write the clipboard during a tap, so Mac → phone goes through
+// a button (in the panel, or the toast that appears when you copy on the Mac).
+let macClip = '';
+let clipWaiter = null;
+
+function onMacClipboard(ev) {
+  macClip = ev.s;
+  if (clipWaiter) { clipWaiter(ev.s); clipWaiter = null; return; }
+  if (ev.auto) {
+    $('#toastText').textContent = `Mac copied: ${ev.s.replace(/\s+/g, ' ').slice(0, 60)}`;
+    $('#toast').classList.remove('hidden');
+    clearTimeout(onMacClipboard.t);
+    onMacClipboard.t = setTimeout(() => $('#toast').classList.add('hidden'), 6000);
+  }
+}
+
+function copyToPhone(textPromise) {
+  // ClipboardItem accepts a promise, so the write still counts as part of the tap.
+  if (window.ClipboardItem && navigator.clipboard?.write) {
+    const blob = textPromise.then((t) => new Blob([t], { type: 'text/plain' }));
+    return navigator.clipboard.write([new ClipboardItem({ 'text/plain': blob })]);
+  }
+  return textPromise.then((t) => navigator.clipboard.writeText(t));
+}
+
+function flash(msg) {
+  $('#toastText').textContent = msg;
+  $('#toast').classList.remove('hidden');
+  clearTimeout(onMacClipboard.t);
+  onMacClipboard.t = setTimeout(() => $('#toast').classList.add('hidden'), 2500);
+}
+
+// ---------- orientation ----------
+// The stream is sized for the device's longer side, so rotating needs no reconnect: just re-fit.
+function fitMode(mode) {
+  view.z = 1;
+  if (mode === 'fill' && canvas.width) {   // cover the whole screen, cropping the edges
+    const b = baseScale();
+    view.z = Math.max(1, innerWidth / (canvas.width * b), innerHeight / (canvas.height * b));
+    view.x = (innerWidth - canvas.width * b * view.z) / 2;
+    view.y = (innerHeight - canvas.height * b * view.z) / 2;
+  }
+  layout();
+}
+addEventListener('orientationchange', () => setTimeout(() => fitMode('fit'), 250));
+screen.orientation?.addEventListener?.('change', () => setTimeout(() => fitMode('fit'), 250));
+
 // ---------- toolbar & panel ----------
 const actions = {
   keyboard: toggleKeyboard,
@@ -488,6 +617,25 @@ const actions = {
   close: () => $('#more').classList.add('hidden'),
   mode: () => setMode(settings.mode === 'trackpad' ? 'touch' : 'trackpad'),
   typeText: () => send({ t: 'text', s: $('#clipText').value }),
+  sendClip: () => { send({ t: 'clip-set', s: $('#clipText').value }); flash('Put on the Mac clipboard'); },
+  pasteToMac: async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      send({ t: 'clip-set', s: text });
+      sendKey('v', ['cmd']);
+      flash('Pasted on the Mac');
+    } catch { flash('Clipboard access was blocked'); }
+  },
+  copyFromMac: () => {
+    const text = new Promise((resolve) => { clipWaiter = resolve; send({ t: 'clip-get' }); setTimeout(() => resolve(macClip), 1500); });
+    copyToPhone(text).then(() => flash('Copied from the Mac'), () => flash('Clipboard access was blocked'));
+  },
+  toastCopy: () => {
+    copyToPhone(Promise.resolve(macClip)).then(() => flash('Copied'), () => flash('Clipboard access was blocked'));
+  },
+  toastClose: () => $('#toast').classList.add('hidden'),
+  fit: () => { fitMode('fit'); $('#more').classList.add('hidden'); },
+  fillScreen: () => { fitMode('fill'); $('#more').classList.add('hidden'); },
 };
 
 function setMode(m) {
