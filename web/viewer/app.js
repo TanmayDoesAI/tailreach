@@ -106,6 +106,7 @@ function connect() {
     ws = null;
     stopRTC(false);
     resetDecoder();
+    if (stopped) return;
     if (e.code === 4001) return stoppedOnMac();
     if (!opened && retry >= 1) {
       // Refused before it opened: find out why instead of retrying blindly.
@@ -513,6 +514,7 @@ function chooseDisplay(id) {
 
 // ---------- view: fit, zoom and pan ----------
 const view = { z: 1, x: 0, y: 0 };   // zoom factor and top-left offset in CSS px
+const viewArea = { x: 0, y: 0, width: innerWidth, height: innerHeight };
 const cursor = { x: 0.5, y: 0.5 };   // remote cursor, normalised 0..1
 const screenPts = { w: 1440, h: 900 }; // the Mac's screen size in points
 const cursorShape = { w: 0, h: 0, hx: 0, hy: 0 };
@@ -575,15 +577,16 @@ function predictAbs(p) {
 }
 
 function baseScale() {
-  return Math.min(innerWidth / (canvas.width || 1), innerHeight / (canvas.height || 1));
+  return Math.min(viewArea.width / (canvas.width || 1), viewArea.height / (canvas.height || 1));
 }
 
 function layout() {
   const s = baseScale() * view.z;
   const w = canvas.width * s, h = canvas.height * s;
   // Center when smaller than the screen, otherwise keep the content covering it.
-  view.x = w <= innerWidth ? (innerWidth - w) / 2 : Math.min(0, Math.max(innerWidth - w, view.x));
-  view.y = h <= innerHeight ? (innerHeight - h) / 2 : Math.min(0, Math.max(innerHeight - h, view.y));
+  const { x, y, width, height } = viewArea;
+  view.x = w <= width ? x + (width - w) / 2 : Math.min(x, Math.max(x + width - w, view.x));
+  view.y = h <= height ? y + (height - h) / 2 : Math.min(y, Math.max(y + height - h, view.y));
   canvas.style.transform = `translate(${view.x}px, ${view.y}px) scale(${s})`;
   video.style.width = `${canvas.width}px`;
   video.style.height = `${canvas.height}px`;
@@ -594,14 +597,15 @@ function layout() {
 
 // Put the ‹ › Space arrows in the empty side margins when there is room, else at the edges.
 function placeSpaceArrows(shownWidth) {
-  const gutter = view.z === 1 ? (innerWidth - shownWidth) / 2 : 0;
+  const gutter = view.z === 1 ? (viewArea.width - shownWidth) / 2 : 0;
   const roomy = gutter >= 52;
   document.body.classList.toggle('roomy', roomy);
   const left = roomy ? Math.max(4, gutter / 2 - 22) : 6;
   $('#spacePrev').style.left = `calc(${left}px + env(safe-area-inset-left, 0px) * ${roomy ? 0 : 1})`;
   $('#spaceNext').style.right = `calc(${left}px + env(safe-area-inset-right, 0px) * ${roomy ? 0 : 1})`;
+  for (const el of [$('#spacePrev'), $('#spaceNext')]) el.style.top = `${viewArea.y + viewArea.height / 2}px`;
 }
-addEventListener('resize', layout);
+addEventListener('resize', fitViewport);
 
 function zoomAt(newZ, cx, cy) {
   const old = baseScale() * view.z;
@@ -618,9 +622,10 @@ function followCursor() {
   const s = baseScale() * view.z;
   const px = view.x + cursor.x * canvas.width * s;
   const py = view.y + cursor.y * canvas.height * s;
-  const mx = innerWidth * 0.2, my = innerHeight * 0.2;
-  if (px < mx) view.x += mx - px; else if (px > innerWidth - mx) view.x -= px - (innerWidth - mx);
-  if (py < my) view.y += my - py; else if (py > innerHeight - my) view.y -= py - (innerHeight - my);
+  const { x, y, width, height } = viewArea;
+  const mx = width * 0.2, my = height * 0.2;
+  if (px < x + mx) view.x += x + mx - px; else if (px > x + width - mx) view.x -= px - (x + width - mx);
+  if (py < y + my) view.y += y + my - py; else if (py > y + height - my) view.y -= py - (y + height - my);
   layout();
 }
 
@@ -897,7 +902,15 @@ document.addEventListener('keydown', (e) => {
   else sendText(e.key);
 });
 
-// On-screen keyboard: keep the textarea empty, forward what would have been typed
+// iOS may skip deletion events when the textarea is empty. Keep a local sentinel
+// before the caret so Backspace (including hold-to-delete) always has text to delete.
+// Only the user's edit is forwarded; the sentinel never goes to the Mac.
+const KBD_SENTINEL = '\u200B';
+function resetKeyboardInput() {
+  kbd.value = KBD_SENTINEL;
+  kbd.setSelectionRange(KBD_SENTINEL.length, KBD_SENTINEL.length);
+}
+
 kbd.addEventListener('beforeinput', (e) => {
   e.preventDefault();
   switch (e.inputType) {
@@ -913,23 +926,44 @@ kbd.addEventListener('beforeinput', (e) => {
     case 'deleteContentBackward': sendKey('backspace'); break;
     case 'deleteWordBackward': sendKey('backspace', ['opt']); break;
   }
+  resetKeyboardInput();
 });
-kbd.addEventListener('focus', () => document.body.classList.add('kbd-open'));
-kbd.addEventListener('blur', () => document.body.classList.remove('kbd-open'));
+// Some keyboard edits aren't cancelable: restore the sentinel after the native edit
+// too, without forwarding it a second time.
+kbd.addEventListener('input', resetKeyboardInput);
+kbd.addEventListener('focus', () => {
+  resetKeyboardInput();
+  document.body.classList.add('kbd-open');
+  fitViewport();
+});
+kbd.addEventListener('blur', () => {
+  document.body.classList.remove('kbd-open');
+  fitViewport();
+});
 
 function toggleKeyboard() {
   document.activeElement === kbd ? kbd.blur() : kbd.focus();
 }
 
-// Keep the toolbar above the on-screen keyboard
-if (window.visualViewport) {
-  const fit = () => {
-    const vv = visualViewport;
-    document.documentElement.style.setProperty('--kb-offset', `${Math.max(0, innerHeight - vv.height - vv.offsetTop)}px`);
-  };
-  visualViewport.addEventListener('resize', fit);
-  visualViewport.addEventListener('scroll', fit);
+// Fit the screen and its input coordinates into the visible area above the keyboard.
+// Both WebRTC video and the canvas fallback use the same transform.
+function fitViewport() {
+  const vv = window.visualViewport;
+  const x = vv?.offsetLeft || 0, y = vv?.offsetTop || 0;
+  const width = vv?.width || innerWidth, height = vv?.height || innerHeight;
+  document.documentElement.style.setProperty('--kb-offset', `${Math.max(0, innerHeight - height - y)}px`);
+  let bottom = y + height;
+  if (document.body.classList.contains('kbd-open') && !document.body.classList.contains('bar-hidden')) {
+    const keys = $('#keys').getBoundingClientRect();
+    if (keys.height) bottom = Math.min(bottom, keys.top - 8);
+  }
+  Object.assign(viewArea, { x, y, width, height: Math.max(1, bottom - y) });
+  layout();
+  followCursor();
 }
+window.visualViewport?.addEventListener('resize', fitViewport);
+window.visualViewport?.addEventListener('scroll', fitViewport);
+fitViewport();
 
 // ---------- no page zoom ----------
 // iOS Safari ignores user-scalable=no, so a pinch on the toolbar or menu would zoom the
@@ -1033,9 +1067,9 @@ function fitMode(mode) {
   view.z = 1;
   if (mode === 'fill' && canvas.width) {   // cover the whole screen, cropping the edges
     const b = baseScale();
-    view.z = Math.max(1, innerWidth / (canvas.width * b), innerHeight / (canvas.height * b));
-    view.x = (innerWidth - canvas.width * b * view.z) / 2;
-    view.y = (innerHeight - canvas.height * b * view.z) / 2;
+    view.z = Math.max(1, viewArea.width / (canvas.width * b), viewArea.height / (canvas.height * b));
+    view.x = viewArea.x + (viewArea.width - canvas.width * b * view.z) / 2;
+    view.y = viewArea.y + (viewArea.height - canvas.height * b * view.z) / 2;
   }
   layout();
 }
@@ -1044,11 +1078,24 @@ screen.orientation?.addEventListener?.('change', () => setTimeout(() => fitMode(
 
 // ---------- toolbar & panel ----------
 const actions = {
+  exit: () => {
+    stopped = true;
+    clearTimeout(rtcRetry);
+    clearTimeout(g.longTimer);
+    g.active = false;
+    stopMomentum();
+    kbd.blur();
+    ws?.close(1000, 'Viewer exited');
+    stopRTC(false);
+    resetDecoder();
+    wakeLock?.release().catch(() => {});
+    location.assign(new URL('../', location.href).href);
+  },
   keyboard: toggleKeyboard,
   more: () => openSheet($('#more').classList.contains('hidden')),
   close: () => openSheet(false),
   mode: () => setMode(settings.mode === 'trackpad' ? 'touch' : 'trackpad'),
-  showBar: () => document.body.classList.remove('bar-hidden'),
+  showBar: () => { document.body.classList.remove('bar-hidden'); fitViewport(); },
   typeText: () => send({ t: 'text', s: $('#clipText').value }),
   sendClip: () => { send({ t: 'clip-set', s: $('#clipText').value }); flash('Put on the Mac clipboard'); },
   pasteToMac: async () => {
@@ -1108,7 +1155,7 @@ document.addEventListener('click', (e) => {
 // Toolbar taps shouldn't close the on-screen keyboard
 document.querySelectorAll('#bar button, #keys button').forEach((b) => b.addEventListener('mousedown', (e) => e.preventDefault()));
 document.querySelectorAll('#bar button, #keys button').forEach((b) => b.addEventListener('touchstart', () => {}, { passive: true }));
-$('#status').addEventListener('click', () => document.body.classList.toggle('bar-hidden'));
+$('#status').addEventListener('click', () => { document.body.classList.toggle('bar-hidden'); fitViewport(); });
 
 // Settings
 // Segmented controls: <button data-set="quality" data-value="auto">

@@ -104,6 +104,12 @@ body.locked #bar, body.locked #keys,
 body.bar-hidden #bar, body.bar-hidden #keys { display: none; }
 
 /* ---------- status ---------- */
+#exit {
+  position: fixed; top: calc(2px + var(--safe-t)); left: calc(8px + env(safe-area-inset-left, 0px)); z-index: 31;
+  min-width: 56px; min-height: 44px; padding: 0 12px; border-radius: var(--r-sm);
+  background: var(--material-strong); color: var(--text); font-size: 14px;
+}
+#exit:active { background: var(--fill-hover); }
 #status {
   position: fixed; top: calc(10px + var(--safe-t)); left: 50%; transform: translateX(-50%); z-index: 11;
   height: 26px; padding: 0 10px; gap: 6px; border-radius: 999px;
