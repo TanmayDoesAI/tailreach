@@ -269,7 +269,13 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 			stats, _ := json.Marshal(map[string]any{
 				"t": "stats", "br": bitrate.Load(), "kbps": sentBytes.Swap(0) * 8 / 1000, "drops": drops.Swap(0), "path": path,
 				"rtc": viaRTC() != nil,
+				"rec": recordingViewer(),
 			})
+			if recordingViewer() {
+				var m map[string]any
+				json.Unmarshal(stats, &m)
+				writeViewerRec("mac", m)
+			}
 			select {
 			case out <- outMsg{typ: websocket.MessageText, data: stats}:
 			default:
@@ -286,6 +292,8 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 			c["t"] = "pong"
 			b, _ := json.Marshal(c)
 			reply(b)
+		case t == "vstats": // the phone's own receive stats, only while recording (vrec.go)
+			writeViewerRec("phone", c)
 		case allowedCmds[t] && t != "start":
 			limit := 4096
 			if t == "clip-set" {

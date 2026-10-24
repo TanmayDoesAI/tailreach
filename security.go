@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -376,6 +377,12 @@ func (a *app) control(req map[string]any) map[string]any {
 		}
 		a.audit("test-session", "this Mac", "")
 		return map[string]any{"cookie": cookies}
+	case "recordViewer":
+		secs, _ := req["secs"].(float64)
+		secs = min(max(secs, 0), 1800)
+		path := a.startViewerRec(int(secs))
+		a.audit("viewer-stats", "this Mac", fmt.Sprintf("%ds", int(secs)))
+		return map[string]any{"path": path, "secs": int(secs)}
 	case "stopSessions":
 		stopAllSessions()
 		if a.auth2 != nil {

@@ -370,6 +370,7 @@ function onEvent(ev) {
     case 'stats':
       stats.kbps = ev.kbps;
       stats.path = ev.path || '';
+      stats.rec = !!ev.rec;
       document.body.classList.toggle('relayed', !!stats.path && stats.path !== 'direct');
       break;
     case 'pong': stats.rtt = Math.round(performance.now() - ev.at); break;
@@ -395,6 +396,7 @@ function onEvent(ev) {
 setInterval(() => {
   send({ t: 'ping', at: performance.now() });
   stats.fps = stats.frames; stats.frames = 0;
+  if (stats.rec) recordStats();
   if (document.body.dataset.state === 'on') {
     if (!document.body.classList.contains('stale')) {
       const relayed = stats.path && stats.path !== 'direct';
@@ -404,6 +406,32 @@ setInterval(() => {
     $('#status').title = `${stats.path || 'unknown path'} · ${stats.fps} fps · ${(stats.kbps / 1000).toFixed(1)} Mbps`;
   }
 }, 1000);
+
+// Measurement mode, switched on from the Mac only (control socket "recordViewer"):
+// report what this browser actually receives, decodes and shows, once a second.
+// Counters are cumulative; the Mac logs them as they come.
+function recordStats() {
+  const base = { t: 'vstats', shown: stats.fps, rtt: stats.rtt, rtc: document.body.classList.contains('rtc'),
+    vis: document.visibilityState, ua: navigator.userAgent.slice(0, 120) };
+  if (!pc) { send(base); return; }
+  pc.getStats().then((rep) => {
+    rep.forEach((r) => {
+      if (r.type === 'inbound-rtp' && r.kind === 'video') {
+        for (const k of ['framesReceived', 'framesDecoded', 'framesDropped', 'keyFramesDecoded', 'framesPerSecond',
+          'frameWidth', 'frameHeight', 'freezeCount', 'totalFreezesDuration', 'pauseCount', 'totalPausesDuration',
+          'jitter', 'jitterBufferDelay', 'jitterBufferEmittedCount', 'jitterBufferTargetDelay', 'totalDecodeTime',
+          'totalProcessingDelay', 'totalInterFrameDelay', 'totalSquaredInterFrameDelay', 'packetsReceived',
+          'packetsLost', 'bytesReceived', 'nackCount', 'pliCount', 'firCount', 'decoderImplementation']) {
+          if (r[k] !== undefined) base[k] = r[k];
+        }
+      } else if (r.type === 'candidate-pair' && r.nominated && r.state === 'succeeded') {
+        base.pairRtt = r.currentRoundTripTime;
+        base.availIn = r.availableIncomingBitrate;
+      }
+    });
+    send(base);
+  }).catch(() => send(base));
+}
 
 // ---------- lock screen ----------
 // Capture and simulated typing can't reach macOS's lock screen, but the Mac's own
