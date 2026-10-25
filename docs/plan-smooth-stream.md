@@ -43,6 +43,23 @@ We measured two builds on a real iPhone while the Mac played a YouTube video. Lo
 - The viewer says `bye` when you leave, so the Mac's panel clears at once.
 - The stats log GCC's estimate, giving real data for step 2.
 
+**2 and 3 (first version): done in `42e9130`, checked offline, not yet on the phone.**
+
+**How it works**
+- **Signals:** the rate is steered by a queue probe on the unordered channel plus the phone's receiver-report loss. GCC is ignored: its loss figure reads 5–30% on a clean jittery path.
+- **Dips:** cut fast on a real queue or loss, then jump back to the last good rate when the dip clears. Probing is gentle near the last limit.
+- **Retransmits:** NACK resends are capped. Unlimited resends caused a storm after every dip, about 3000 drops a second.
+- **Reconnects:** the viewer holds the last frame and re-offers WebRTC, never stale WebSocket video.
+
+**Offline evidence**
+- **Unit simulations:** `ratectl_test.go` covers dips, a step down, a path change, a blackout, and still content followed by motion. A 30-seed sweep with 40 ms jitter (`SEEDS=1 go test -run Seeds`) gave 0 slow recoveries and a between-dip queue p90 with median 64 ms and max 155 ms.
+- **`streambench`:** first its proxy was fixed. It used to charge dropped packets against link time and never tail-dropped, which skewed all earlier capped-link numbers.
+  - Clean link, plugged in: 53.7 fps, p95 11 ms, 3 → 20 Mbit/s in 11 s.
+  - Three 5G-style dips and a blackout: every recovery reached about 55 fps within 2–3 s. `master` stayed stuck at 1.06 Mbit/s after its first dip.
+- **Watch out:** on battery, the Mac's capture drops to about 30 fps. Benches are only comparable when the power state matches.
+
+**Known cost:** a sudden dip from a high rate fills the path's buffer once before the cut lands. Latency p99 is about 1 s in the harsh bench, against about 0.3 s for `master`, which stays at 1 Mbit/s. A candidate fix is dropping frames before encoding when the probe reads a deep queue (step 5).
+
 **2. A controller built for 5G: drop fast, recover fast, never stall.**
 - **Log first.** Record what GCC's estimate, loss and RTT do across real 5G dips and Wi-Fi.
 - **Cut quickly** on real congestion: loss bursts, or RTT rising above its recent floor.
