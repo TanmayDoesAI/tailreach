@@ -270,6 +270,7 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 				"t": "stats", "br": bitrate.Load(), "kbps": sentBytes.Swap(0) * 8 / 1000, "drops": drops.Swap(0), "path": path,
 				"rtc": viaRTC() != nil,
 				"rec": recordingViewer(),
+				"est": func() int { if s := viaRTC(); s != nil { return s.targetBitrate() }; return 0 }(),
 			})
 			if recordingViewer() {
 				var m map[string]any
@@ -288,6 +289,8 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 	forward := func(c map[string]any, reply func([]byte)) {
 		t, _ := c["t"].(string)
 		switch {
+		case t == "bye": // the viewer is leaving (page hidden or closed): end now, not at a timeout
+			cancel()
 		case t == "ping":
 			c["t"] = "pong"
 			b, _ := json.Marshal(c)

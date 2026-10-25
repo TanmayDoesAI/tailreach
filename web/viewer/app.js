@@ -156,10 +156,18 @@ function send(obj) {
 }
 
 // Drop the connection while the app is in the background; resume instantly on return.
+// Leaving says so at once (iOS may freeze the page before a WebSocket close gets out),
+// so the Mac's "Screen shared" panel goes away immediately rather than after a timeout.
+function leave() {
+  send({ t: 'bye' });
+  stopRTC(false);
+  ws?.close();
+}
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden') ws?.close();
+  if (document.visibilityState === 'hidden') leave();
   else connect();
 });
+window.addEventListener('pagehide', leave);
 
 async function keepAwake() {
   try { wakeLock = await navigator.wakeLock?.request('screen'); } catch {}
@@ -267,7 +275,9 @@ async function startRTC() {
       try { e.receiver.playoutDelayHint = 0; } catch {}
       video.srcObject = new MediaStream([e.track]);
       video.play().catch(() => {});
-      if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(onVideoFrame);
+      // One callback chain per track: a chain from an earlier connection would count every frame again.
+      const gen = ++frameGen;
+      if (video.requestVideoFrameCallback) video.requestVideoFrameCallback((n, m) => onVideoFrame(n, m, false, gen));
       else watchVideo();   // Firefox: no per-frame callback, so poll playback instead
     };
     pc.onconnectionstatechange = () => {
@@ -334,8 +344,10 @@ function watchVideo() {
   tick();
 }
 
-function onVideoFrame(now, meta, polled) {
-  if (!video.srcObject) return;
+let frameGen = 0;
+
+function onVideoFrame(now, meta, polled, gen) {
+  if (!video.srcObject || (!polled && gen !== frameGen)) return;
   if (!polled) stats.frames++;
   if (canvas.width !== meta.width || canvas.height !== meta.height) {
     canvas.width = meta.width;   // canvas carries the stream size for layout, cursor and input maths
@@ -349,7 +361,7 @@ function onVideoFrame(now, meta, polled) {
   }
   hasFrame = true;
   if (document.body.dataset.state !== 'on' || document.body.classList.contains('stale')) { setState('on', 'Connected'); drawCursor(); }
-  if (!polled) video.requestVideoFrameCallback(onVideoFrame);
+  if (!polled) video.requestVideoFrameCallback((n, m) => onVideoFrame(n, m, false, gen));
 }
 
 function onEvent(ev) {
