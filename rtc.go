@@ -65,7 +65,17 @@ type rtcSession struct {
 	connected atomic.Bool
 	est       atomic.Value // cc.BandwidthEstimator
 	sentBytes atomic.Int64
+	sentTotal atomic.Int64 // never reset: the rate controller reads its own deltas
 	move      atomic.Pointer[webrtc.DataChannel]
+	done      chan struct{}
+
+	rateBps atomic.Int64 // encoder target, for the retransmit budget (nacklimit.go)
+	rrLoss  atomic.Int64 // per-mille lost, from the viewer's receiver reports
+	rrAt   atomic.Int64 // unix ms of the last report
+
+	probeMu  sync.Mutex
+	floor    rttFloor  // probe round trips → standing queue (ratectl.go)
+	lastPong time.Time // zero until the first reply
 
 	mu      sync.Mutex
 	sps     [][]byte
@@ -104,7 +114,7 @@ func (a *app) newRTC(offer string, maxBitrate int, onKeyframe, onConnected, onFa
 		}
 	}
 
-	s := &rtcSession{}
+	s := &rtcSession{done: make(chan struct{})}
 	reg := &interceptor.Registry{}
 	ccf, err := cc.NewInterceptor(func() (cc.BandwidthEstimator, error) {
 		return gcc.NewSendSideBWE(
@@ -124,6 +134,7 @@ func (a *app) newRTC(offer string, maxBitrate int, onKeyframe, onConnected, onFa
 	if err := webrtc.ConfigureTWCCHeaderExtensionSender(m, reg); err != nil {
 		return nil, "", err
 	}
+	reg.Add(nackLimiterFactory{rateBps: &s.rateBps}) // ahead of the NACK responder: trims its work
 	if err := webrtc.RegisterDefaultInterceptors(m, reg); err != nil { // NACK retransmits, RTCP reports
 		return nil, "", err
 	}
@@ -159,6 +170,13 @@ func (a *app) newRTC(offer string, maxBitrate int, onKeyframe, onConnected, onFa
 				return
 			}
 			for _, p := range pkts {
+				if rr, ok := p.(*rtcp.ReceiverReport); ok {
+					for _, rep := range rr.Reports {
+						s.rrLoss.Store(int64(rep.FractionLost) * 1000 / 256)
+						s.rrAt.Store(time.Now().UnixMilli())
+					}
+					continue
+				}
 				switch p.(type) {
 				case *rtcp.PictureLossIndication, *rtcp.FullIntraRequest:
 					s.mu.Lock()
@@ -181,7 +199,10 @@ func (a *app) newRTC(offer string, maxBitrate int, onKeyframe, onConnected, onFa
 			return
 		}
 		if label == "move" {
-			dc.OnOpen(func() { s.move.Store(dc) })
+			dc.OnOpen(func() {
+				s.move.Store(dc)
+				go s.probeLoop()
+			})
 		}
 		dc.OnMessage(func(m webrtc.DataChannelMessage) {
 			if m.IsString {
@@ -275,6 +296,7 @@ func (s *rtcSession) writeFrame(msg []byte) error {
 	pkts := s.pkt.Packetize(annexB, 0)
 	s.mu.Unlock()
 	s.sentBytes.Add(int64(len(annexB)))
+	s.sentTotal.Add(int64(len(annexB)))
 	for _, p := range pkts {
 		p.Timestamp = ts
 		if err := s.track.WriteRTP(p); err != nil {
@@ -303,7 +325,76 @@ func randUint32() uint32 {
 	return binary.BigEndian.Uint32(b[:])
 }
 
-func (s *rtcSession) close() { s.pc.Close() }
+func (s *rtcSession) close() {
+	s.probeMu.Lock()
+	select {
+	case <-s.done:
+	default:
+		close(s.done)
+	}
+	s.probeMu.Unlock()
+	s.pc.Close()
+}
+
+// probeLoop pings the viewer four times a second on the unordered channel. The reply
+// comes back behind whatever video is queued on the path, so its round trip minus the
+// best recent one is the standing queue: the rate controller's main signal. Unordered
+// and never resent, so a lost ping is just a missed sample, never a stale one.
+func (s *rtcSession) probeLoop() {
+	t := time.NewTicker(250 * time.Millisecond)
+	defer t.Stop()
+	for {
+		select {
+		case <-s.done:
+			return
+		case <-t.C:
+		}
+		if dc := s.move.Load(); dc != nil && dc.ReadyState() == webrtc.DataChannelStateOpen {
+			dc.SendText(string(jsonMsg(map[string]any{"t": "sping", "at": time.Now().UnixMilli()})))
+		}
+	}
+}
+
+// pong takes the viewer's reply to a probe.
+func (s *rtcSession) pong(at float64) {
+	now := time.Now()
+	rtt := now.UnixMilli() - int64(at)
+	if rtt < 0 || rtt > 30_000 {
+		return
+	}
+	s.probeMu.Lock()
+	s.floor.add(now, rtt)
+	s.lastPong = now
+	s.probeMu.Unlock()
+}
+
+// queueMs is the standing queue on the path in ms; -1 before the first probe reply.
+// Replies that stop altogether (a 5G blackout) read as a deep queue: nothing is
+// getting through, so nothing more should be pushed at it.
+func (s *rtcSession) queueMs() int64 {
+	s.probeMu.Lock()
+	defer s.probeMu.Unlock()
+	if s.lastPong.IsZero() {
+		return -1
+	}
+	if time.Since(s.lastPong) > 1500*time.Millisecond {
+		return queueSevere + 1
+	}
+	return s.floor.queue(time.Now())
+}
+
+// newLoss is the packet loss in the viewer's latest receiver report (0..1), once per
+// report (about a second apart): reading one report on every tick would cut for the
+// same loss four times. Not GCC's transport-feedback loss: that counts every packet
+// still in flight or reordered when feedback is sent, 5-30% on a clean 5G path.
+func (s *rtcSession) newLoss(seen *int64) float64 {
+	at := s.rrAt.Load()
+	if at == *seen {
+		return 0
+	}
+	*seen = at
+	return float64(s.rrLoss.Load()) / 1000
+}
 
 // appendAnnexB converts 4-byte length-prefixed NAL units to start-code-prefixed ones.
 func appendAnnexB(dst, avcc []byte) []byte {

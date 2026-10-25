@@ -104,7 +104,7 @@ function connect() {
   ws.addEventListener('open', () => { opened = true; });
   ws.onclose = async (e) => {
     ws = null;
-    stopRTC(false);
+    stopRTC(false, true);
     resetDecoder();
     if (stopped) return;
     if (e.code === 4001) return stoppedOnMac();
@@ -124,7 +124,9 @@ function connect() {
 function sendStart() {
   const p = PRESETS[settings.quality] || PRESETS.auto;
   const side = Math.min(p.maxSide, Math.round(Math.max(screen.width, screen.height) * devicePixelRatio));
-  send({ t: 'start', w: side, h: side, fps: +settings.fps, maxbr: p.maxbr, localCursor: true, display: settings.display });
+  // rtcFirst: no WebSocket video while WebRTC connects. Over a relay (just after a
+  // network switch) it would run seconds behind; the last frame waits instead.
+  send({ t: 'start', w: side, h: side, fps: +settings.fps, maxbr: p.maxbr, localCursor: true, display: settings.display, rtcFirst: rtcWanted() });
 }
 
 function stoppedOnMac() {
@@ -257,9 +259,11 @@ let rtcRetries = 0;
 let inputDC = null;   // ordered, reliable
 let moveDC = null;    // unordered, never resent
 
-async function startRTC() {
-  if (!window.RTCPeerConnection || store.get('transport', 'auto') === 'ws') return;
-  stopRTC(false);
+function rtcWanted() { return !!window.RTCPeerConnection && store.get('transport', 'auto') !== 'ws'; }
+
+async function startRTC(keepPicture = false) {
+  if (!rtcWanted()) return;
+  stopRTC(false, keepPicture);
   try {
     pc = new RTCPeerConnection({ iceServers: [] });   // tailnet only: no STUN/TURN
     const tr = pc.addTransceiver('video', { direction: 'recvonly' });
@@ -283,14 +287,14 @@ async function startRTC() {
     pc.onconnectionstatechange = () => {
       if (!pc) return;
       clearTimeout(rtcStall);
-      if (['failed', 'closed'].includes(pc.connectionState)) fallbackToWS();
-      // 'disconnected' can recover on its own; if it doesn't soon, keep the picture moving over the WebSocket.
-      else if (pc.connectionState === 'disconnected') rtcStall = setTimeout(fallbackToWS, 2000);
+      if (['failed', 'closed'].includes(pc.connectionState)) reofferRTC();
+      // 'disconnected' often recovers by itself (a 5G dip); if it doesn't, connect afresh.
+      else if (pc.connectionState === 'disconnected') rtcStall = setTimeout(reofferRTC, 1500);
     };
     await pc.setLocalDescription(await pc.createOffer());
     await gathered(pc, 1000);
     send({ t: 'rtc-offer', sdp: pc.localDescription.sdp });
-    rtcTimer = setTimeout(() => { if (!document.body.classList.contains('rtc')) fallbackToWS(); }, 6000);
+    rtcTimer = setTimeout(() => { if (!rtcLive) fallbackToWS(); }, 5000);
   } catch {
     fallbackToWS();
   }
@@ -306,6 +310,17 @@ function gathered(conn, ms) {
   });
 }
 
+// A dropped WebRTC connection (network switch, long dip): offer a fresh one at once,
+// holding the last frame. The WebSocket picture is the last resort, after two tries.
+let rtcReoffers = 0;
+let rtcLive = false;   // frames are arriving over the current connection
+function reofferRTC() {
+  if (!ws || ws.readyState !== 1) return;   // the WebSocket reconnect starts WebRTC itself
+  if (rtcReoffers++ >= 2) return fallbackToWS();
+  setState('connecting', 'Reconnecting');
+  startRTC(true);
+}
+
 function fallbackToWS() {
   if (!pc) return;
   stopRTC(true);
@@ -314,15 +329,17 @@ function fallbackToWS() {
   if (rtcRetries < 4) rtcRetry = setTimeout(() => { if (ws?.readyState === 1) startRTC(); }, 5000 * 2 ** rtcRetries++);
 }
 
-function stopRTC(tellServer) {
+function stopRTC(tellServer, keepPicture = false) {
   clearTimeout(rtcTimer);
   clearTimeout(rtcStall);
   inputDC = moveDC = null;
+  rtcLive = false;
   if (pc) {
     pc.close();
     pc = null;
-    if (tellServer) send({ t: 'rtc-off' });
+    if (tellServer) send({ t: 'rtc-off' });   // the Mac switches video to the WebSocket
   }
+  if (keepPicture && document.body.classList.contains('rtc')) return;   // last frame stays up, dimmed
   video.srcObject = null;
   document.body.classList.remove('rtc');
 }
@@ -354,10 +371,12 @@ function onVideoFrame(now, meta, polled, gen) {
     canvas.height = meta.height;
     layout();
   }
-  if (!document.body.classList.contains('rtc')) {
+  if (!rtcLive) {
+    rtcLive = true;
     document.body.classList.add('rtc');
     clearTimeout(rtcTimer);
     rtcRetries = 0;
+    rtcReoffers = 0;
   }
   hasFrame = true;
   if (document.body.dataset.state !== 'on' || document.body.classList.contains('stale')) { setState('on', 'Connected'); drawCursor(); }
@@ -386,9 +405,12 @@ function onEvent(ev) {
       document.body.classList.toggle('relayed', !!stats.path && stats.path !== 'direct');
       break;
     case 'pong': stats.rtt = Math.round(performance.now() - ev.at); break;
+    case 'sping':   // the Mac's path probe: answer at once, on the same unordered channel
+      if (moveDC?.readyState === 'open') moveDC.send(JSON.stringify({ t: 'spong', at: ev.at }));
+      break;
     case 'lock': setLocked(ev.locked); break;
     case 'rtc-answer': pc?.setRemoteDescription({ type: 'answer', sdp: ev.sdp }).catch(() => fallbackToWS()); break;
-    case 'rtc-failed': stopRTC(false); break;   // the server has already switched back
+    case 'rtc-failed': reofferRTC(); break;
     case 'error':
       if (locked) break;   // capture pauses while the Mac is locked; that's expected
       setState('off', ev.needsPermission
@@ -412,7 +434,7 @@ setInterval(() => {
   if (document.body.dataset.state === 'on') {
     if (!document.body.classList.contains('stale')) {
       const relayed = stats.path && stats.path !== 'direct';
-      $('#statusText').textContent = `${stats.rtt} ms${relayed ? ' · relayed' : ''}`;
+      $('#statusText').textContent = `${stats.rtt} ms · ${stats.fps} fps${relayed ? ' · relayed' : ''}`;
       $('#status').classList.toggle('rtc', document.body.classList.contains('rtc'));
     }
     $('#status').title = `${stats.path || 'unknown path'} · ${stats.fps} fps · ${(stats.kbps / 1000).toFixed(1)} Mbps`;

@@ -27,7 +27,9 @@ import (
 // once WebRTC is up, input arrives on its data channels instead (see rtc.go).
 
 const (
-	minBitrate  = 1_000_000
+	minBitrate    = 1_000_000 // WebSocket path, and the least a viewer may ask for as its maximum
+	rtcMinBitrate = 500_000   // WebRTC path: the encoder's own floor
+	rtcStartRate  = 3_000_000 // safe on any 5G; Wi-Fi climbs from here within seconds
 	backlogHigh = 8 // queued frames before we call the link congested (~130 ms at 60 fps)
 )
 
@@ -113,8 +115,9 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 		congested  atomic.Bool
 		drops      atomic.Int64
 		sentBytes  atomic.Int64
+		holdWS     atomic.Bool // the viewer is connecting WebRTC: no video on the WebSocket meanwhile
 	)
-	bitrate.Store(8_000_000)
+	bitrate.Store(rtcStartRate)
 	maxBitrate.Store(20_000_000)
 
 	// WebRTC, once the browser has negotiated it and ICE is connected, carries the video.
@@ -167,8 +170,14 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 			}
 			push(outMsg{typ: websocket.MessageText, data: buf[1:]})
 		case 1: // decoder config: never dropped
+			if holdWS.Load() {
+				return // sent again (with a keyframe) if the viewer falls back to the WebSocket
+			}
 			push(outMsg{typ: websocket.MessageBinary, data: buf})
 		case 2:
+			if holdWS.Load() {
+				return
+			}
 			key := len(buf) > 1 && buf[1] == 1
 			if waitKey && !key {
 				drops.Add(1)
@@ -217,12 +226,18 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// Four times a second: steer the encoder to what congestion control says the path
-	// carries (with headroom), so a sudden drop is followed within a frame or two.
+	// Four times a second on WebRTC: steer the encoder by what the path is doing (see
+	// ratectl.go): cut fast on a queue or loss, return to the last good rate as soon as
+	// a dip clears.
+	var ctlState atomic.Value // map[string]any for the stats line
 	go func() {
 		t := time.NewTicker(250 * time.Millisecond)
 		defer t.Stop()
-		for {
+		ctl := newRateCtl(rtcMinBitrate, maxBitrate.Load(), rtcStartRate)
+		var cur *rtcSession
+		var sent [4]int64 // sentTotal at each of the last four ticks
+		var rrSeen int64  // the receiver report last taken into account
+		for i := 0; ; i++ {
 			select {
 			case <-ctx.Done():
 				return
@@ -232,12 +247,23 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 			if s == nil {
 				continue
 			}
-			if t := int64(s.targetBitrate()) * 85 / 100; t > 0 {
-				t = min(max(t, minBitrate), maxBitrate.Load())
-				if d := t - bitrate.Load(); d > t/10 || -d > t/10 {
-					bitrate.Store(t)
-					toHelper(map[string]any{"t": "br", "bps": t})
+			if s != cur { // a new connection (maybe a new network): fresh sent history
+				cur = s
+				for j := range sent {
+					sent[j] = s.sentTotal.Load()
 				}
+			}
+			total := s.sentTotal.Load()
+			sentBps := (total - sent[i%4]) * 8 // over the last second
+			sent[i%4] = total
+			ctl.max = maxBitrate.Load()
+			q, loss := s.queueMs(), s.newLoss(&rrSeen)
+			br := ctl.step(rateSample{now: time.Now(), queueMs: q, loss: loss, sentBps: sentBps})
+			s.rateBps.Store(br)
+			ctlState.Store(map[string]any{"q": q, "loss": loss, "good": ctl.good, "cutAt": ctl.cutAt, "sentBps": sentBps})
+			if d := br - bitrate.Load(); d > br/20 || -d > br/20 {
+				bitrate.Store(br)
+				toHelper(map[string]any{"t": "br", "bps": br})
 			}
 		}
 	}()
@@ -271,6 +297,7 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 				"rtc": viaRTC() != nil,
 				"rec": recordingViewer(),
 				"est": func() int { if s := viaRTC(); s != nil { return s.targetBitrate() }; return 0 }(),
+				"ctl": ctlState.Load(),
 			})
 			if recordingViewer() {
 				var m map[string]any
@@ -289,6 +316,12 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 	forward := func(c map[string]any, reply func([]byte)) {
 		t, _ := c["t"].(string)
 		switch {
+		case t == "spong": // reply to the rate controller's path probe (rtc.go probeLoop)
+			if s := rtc.Load(); s != nil {
+				if at, ok := c["at"].(float64); ok {
+					s.pong(at)
+				}
+			}
 		case t == "bye": // the viewer is leaving (page hidden or closed): end now, not at a timeout
 			cancel()
 		case t == "ping":
@@ -368,11 +401,15 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 			rtc.Store(sess)
 			push(outMsg{typ: websocket.MessageText, data: jsonMsg(map[string]any{"t": "rtc-answer", "sdp": answer})})
 		case t == "rtc-off":
+			holdWS.Store(false)
 			if old := rtc.Swap(nil); old != nil {
 				old.close()
 			}
 			toHelper(map[string]any{"t": "resend"}) // WebSocket decoder needs config + keyframe again
 		case t == "start":
+			first, _ := c["rtcFirst"].(bool)
+			holdWS.Store(first)
+			delete(c, "rtcFirst")
 			if mb, ok := c["maxbr"].(float64); ok && mb >= minBitrate {
 				maxBitrate.Store(min(int64(mb), 50_000_000))
 			}
