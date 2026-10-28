@@ -76,6 +76,13 @@
     <button id="backBtn" class="quiet hidden">I already have a passkey</button>
   </section>
 
+  <!-- After the password: offer this device's own fingerprint, face or PIN -->
+  <section id="offer" class="hidden">
+    <p class="note">Sign in with your fingerprint, face or PIN next time?</p>
+    <button id="offerBtn">Set up a passkey</button>
+    <button id="skipBtn" class="quiet">Not now</button>
+  </section>
+
   <p class="err" id="err"></p>
 </main>
 
@@ -112,6 +119,18 @@
     return out;
   }
 
+  // Whether this browser made or used a passkey here, or said no to one. Only steers which
+  // screen comes first; a wrong guess still leaves every way in on screen.
+  const mem = {
+    get: (k) => { try { return localStorage.getItem('md.' + k); } catch { return null; } },
+    set: (k) => { try { localStorage.setItem('md.' + k, '1'); } catch {} },
+  };
+  // A built-in authenticator (Touch ID, Face ID, Windows Hello, Android) is there to use.
+  async function canPasskeyHere() {
+    try { return !!window.PublicKeyCredential && await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable(); }
+    catch { return false; }
+  }
+
   async function post(path, body) {
     // Never hang silently: a request that doesn't come back in 15 s is reported.
     const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -121,7 +140,7 @@
   }
 
   function show(id) {
-    for (const s of ['password', 'signin', 'pair']) $('#' + s).classList.toggle('hidden', s !== id);
+    for (const s of ['password', 'signin', 'pair', 'offer']) $('#' + s).classList.toggle('hidden', s !== id);
     $('#err').textContent = '';
   }
   const fail = (e) => {
@@ -141,6 +160,7 @@
       const { id, options } = await post('auth/login/begin');
       const cred = await navigator.credentials.get({ publicKey: requestOptions(options.publicKey) });
       await post('auth/login/finish?id=' + id, credJSON(cred));
+      mem.set('passkey');
       location.replace(safeNext);
     } catch (e) { fail(e); }
     finally { busy = false; $('#signinBtn').textContent = 'Continue with passkey'; }
@@ -162,21 +182,29 @@
     } catch (e) { fail(e); }
   };
 
-  $('#registerBtn').onclick = async () => {
+  async function register() {
     try {
       const { id, options } = await post('auth/register/begin', { code: $('#code').value.trim() });
-      const cred = await navigator.credentials.create({ publicKey: creationOptions(options.publicKey) });
+      const publicKey = creationOptions(options.publicKey);
+      publicKey.hints = ['client-device'];   // this device's own fingerprint or face, not a phone or key
+      const cred = await navigator.credentials.create({ publicKey });
       await post('auth/register/finish?id=' + id, credJSON(cred));
+      mem.set('passkey');
       location.replace(safeNext);
     } catch (e) { fail(e); }
-  };
+  }
+  $('#registerBtn').onclick = register;
+  $('#offerBtn').onclick = register;
+  $('#skipBtn').onclick = () => { mem.set('nopasskey'); location.replace(safeNext); };
 
   $('#password').onsubmit = async (e) => {
     e.preventDefault();
     try {
       await post('auth/password', { password: $('#pw').value });
       $('#pw').value = '';
-      location.replace(safeNext);   // the password signs you in; a passkey is optional
+      // The password signs you in; a passkey is optional, so offer it once per device.
+      if (!mem.get('passkey') && !mem.get('nopasskey') && await canPasskeyHere()) return show('offer');
+      location.replace(safeNext);
     } catch (err) { fail(err); }
   };
 
@@ -186,12 +214,15 @@
     if (st.authed) return location.replace(safeNext);
     if (st.needPassword) { show('password'); $('#pw').focus(); return; }
     if (!st.codeNeeded) {   // the device password already proved it's you: no code needed
-      $('#pairHint').textContent = 'Create a passkey so next time it’s just Face ID.';
+      $('#pairHint').textContent = 'Create a passkey so next time it’s just your fingerprint or face.';
       $('#codeBtn').classList.add('hidden');
       $('#registerBtn').classList.remove('hidden');
     }
     if (!window.PublicKeyCredential) { $('#err').textContent = 'This browser doesn’t support passkeys.'; return; }
-    show(st.registered ? 'signin' : 'pair');
+    // A passkey made on another device (say the phone) doesn't help here: offer one of its own.
+    const offer = st.registered && !st.codeNeeded && !mem.get('passkey') && !mem.get('nopasskey') && await canPasskeyHere();
+    show(st.registered && !offer ? 'signin' : 'pair');
+    if (offer) $('#backBtn').classList.remove('hidden');
   }
   route();
 </script>

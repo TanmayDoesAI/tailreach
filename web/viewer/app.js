@@ -1178,6 +1178,8 @@ const ICON_PATHS = {
   sunDim:       '<circle cx="12" cy="12" r="3.5"/><path d="M12 5.5v.01M12 18.5v.01M5.5 12h.01M18.5 12h.01M7.4 7.4h.01M16.6 16.6h.01M7.4 16.6h.01M16.6 7.4h.01"/>',
   sun:          '<circle cx="12" cy="12" r="3.5"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6L7 7M17 17l1.4 1.4M5.6 18.4L7 17M17 7l1.4-1.4"/>',
   x:            '<path d="M7 7l10 10M17 7L7 17"/>',
+  expand:       '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
+  shrink:       '<path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/>',
   grip:         '<path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke-width="3"/>',
   extend:       '<rect x="2.5" y="5" width="11" height="8" rx="1.5"/><rect x="10.5" y="9" width="11" height="8" rx="1.5" fill="var(--bg)"/><path d="M7 20h8"/>',
 };
@@ -1234,6 +1236,24 @@ function fitMode(mode) {
 addEventListener('orientationchange', () => setTimeout(() => fitMode('fit'), 250));
 screen.orientation?.addEventListener?.('change', () => setTimeout(() => fitMode('fit'), 250));
 
+// ---------- full screen ----------
+// Browsers that can (desktop, Android, iPad) get a button; iPhone Safari can't, and
+// gets the whole screen from Add to Home Screen instead.
+const fsElement = () => document.fullscreenElement || document.webkitFullscreenElement;
+function toggleFullscreen() {
+  const el = document.documentElement;
+  if (fsElement()) (document.exitFullscreen || document.webkitExitFullscreen)?.call(document)?.catch?.(() => {});
+  else (el.requestFullscreen || el.webkitRequestFullscreen)?.call(el)?.catch?.(() => {});
+}
+function markFullscreen() {
+  const on = !!fsElement();
+  $('#fsBtn').innerHTML = icon(on ? 'shrink' : 'expand');
+  $('#fsBtn').setAttribute('aria-label', on ? 'Exit full screen' : 'Full screen');
+}
+if (document.fullscreenEnabled || document.webkitFullscreenEnabled) $('#fsBtn').classList.remove('hidden');
+document.addEventListener('fullscreenchange', markFullscreen);
+document.addEventListener('webkitfullscreenchange', markFullscreen);
+
 // ---------- toolbar & panel ----------
 const actions = {
   exit: () => {
@@ -1253,6 +1273,7 @@ const actions = {
     location.assign(new URL('../', location.href).href);
   },
   keyboard: toggleKeyboard,
+  fullscreen: toggleFullscreen,
   more: () => openSheet($('#more').classList.contains('hidden')),
   close: () => { openSheet(false); openExtend(false); },
   mode: () => setMode(settings.mode === 'trackpad' ? 'touch' : 'trackpad'),
