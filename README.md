@@ -15,6 +15,18 @@ https://devices.<your-tailnet>.ts.net/mac/      → that Mac's screen
 https://devices.<your-tailnet>.ts.net/mac2/     → another one
 ```
 
+## Why Tailscale
+
+[Tailscale](https://tailscale.com) puts your own devices on one private network (a "tailnet"), wherever they are: home Wi-Fi, office, 5G. It's built on WireGuard, and it's free for personal use. tailreach builds on it instead of running a relay server:
+
+- **Reachable from anywhere, nothing exposed.** The Mac joins your tailnet itself (Tailscale is built into the program), so there's no port forwarding and nothing listening on the internet. Devices connect directly when they can, and through Tailscale's encrypted relays when they can't.
+- **Identity for free.** Every connection carries the Tailscale user and device it came from. tailreach lets in only you, the account that signed it in, before any password is even asked.
+- **Real HTTPS, short names.** MagicDNS gives the Mac a name like `devices.<your-tailnet>.ts.net`, and Tailscale issues it a proper certificate. That's what lets a phone's browser use WebRTC, passkeys and the clipboard.
+
+So the device you view from just needs the Tailscale app, connected to the same account, and a browser.
+
+tailreach is an independent project, not affiliated with Tailscale Inc.
+
 ## What works where
 
 | | Status |
@@ -27,7 +39,11 @@ A native Windows host (fast stream and extended display) is on the roadmap.
 
 ## Get started
 
-You need a Mac with the Xcode Command Line Tools and Go, a Tailscale account, and the Tailscale app on your phone.
+You need:
+
+- a Mac with the Xcode Command Line Tools (`xcode-select --install`) and [Go](https://go.dev/dl/);
+- a [Tailscale](https://tailscale.com) account, with **MagicDNS** and **HTTPS certificates** switched on in the admin console ([DNS settings](https://login.tailscale.com/admin/dns));
+- the Tailscale app on each device you'll view from (phone, tablet, laptop), signed in to the same account.
 
 ```sh
 git clone https://github.com/TanmayDoesAI/tailreach.git && cd tailreach
@@ -206,8 +222,12 @@ On Linux or Windows, point `--vnc` at any VNC server (e.g. `--vnc 127.0.0.1:5901
 
 `AGENTS.md` lists the rules the code must keep: what a viewer may and may not do, how the capture helper stops, and so on. Read it before changing anything security-related.
 
+## Author
+
+Built by Tanmay ([@TanmayDoesAI](https://github.com/TanmayDoesAI)). Issues and pull requests are welcome.
+
 ## License
 
-[Apache License 2.0](LICENSE).
+[Apache License 2.0](LICENSE). Copyright 2026 Tanmay; see [`NOTICE`](NOTICE).
 
 Third-party code: [noVNC](https://github.com/novnc/noVNC) in `web/viewer/novnc/` is MPL-2.0, with its own licence files kept in that folder. The Go dependencies (Tailscale, pion, go-webauthn and others) are fetched through `go.mod` under their own permissive licences (BSD, MIT, Apache-2.0, ISC).
