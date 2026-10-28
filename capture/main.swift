@@ -46,7 +46,11 @@ func emit(_ type: UInt8, _ payload: Data) {
 }
 
 func event(_ obj: [String: Any]) {
-    if let d = try? JSONSerialization.data(withJSONObject: obj) { emit(3, d) }
+    // NaN or infinity (a display that just went away) would raise an ObjC exception that
+    // `try?` can't catch, and the helper would die without ending its capture session.
+    guard JSONSerialization.isValidJSONObject(obj),
+          let d = try? JSONSerialization.data(withJSONObject: obj) else { return }
+    emit(3, d)
 }
 
 func log(_ s: String) {
@@ -322,6 +326,7 @@ final class Input {
 
     func clamp(_ p: CGPoint) -> CGPoint {
         let b = bounds
+        guard b.width > 0, b.height > 0 else { return p }   // the shown display is gone
         return CGPoint(x: min(max(p.x, b.minX), b.maxX - 1), y: min(max(p.y, b.minY), b.maxY - 1))
     }
 
@@ -336,6 +341,7 @@ final class Input {
 
     func moveAbs(_ x: Double, _ y: Double, mods: CGEventFlags) {
         let b = bounds
+        guard b.width > 0, b.height > 0, x.isFinite, y.isFinite else { return }
         move(to: CGPoint(x: b.minX + x * b.width, y: b.minY + y * b.height), mods: mods)
     }
 
@@ -582,6 +588,7 @@ final class CursorWatcher {
     private func poll() {
         guard viewing else { return }
         let b = CGDisplayBounds(shownDisplay)
+        guard b.width > 0, b.height > 0 else { return }   // the shown display is gone: wait for the next start
         if let p = CGEvent(source: nil)?.location, p != lastPos {
             lastPos = p
             event(["t": "cursor", "x": (p.x - b.minX) / b.width, "y": (p.y - b.minY) / b.height])

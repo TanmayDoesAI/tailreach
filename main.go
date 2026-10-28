@@ -72,6 +72,8 @@ func main() {
 		case "version":
 			fmt.Println(version)
 			return
+		case "vdisplay": // internal: owns the extended display (see vdisplay.go)
+			os.Exit(vdisplayChild(os.Args[2:]))
 		}
 	}
 

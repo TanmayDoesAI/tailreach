@@ -56,6 +56,7 @@
     <button data-mod="shift" class="key">⇧</button>
     <span class="sep"></span>
     <button data-key="esc" class="key text">esc</button>
+    <button data-act="extendPanel" id="extendBtn" data-icon="extend" aria-label="Extended display"></button>
     <button data-act="more" data-icon="more" aria-label="More"></button>
   </nav>
 
@@ -75,6 +76,32 @@
     <button data-combo="cmd+z" class="key text">⌘Z</button>
     <button data-combo="cmd+a" class="key text">⌘A</button>
   </nav>
+
+  <!-- Another device has the Mac -->
+  <section id="busy" class="card hidden" aria-label="Mac in use">
+    <span class="glyph" data-icon="desktop"></span>
+    <h1>Mac is in use</h1>
+    <p class="sub"><b id="busyBy"></b> is connected to this Mac right now. Only one device can control it at a time.</p>
+    <button class="primary" data-act="busyTake">Take over</button>
+    <button class="primary secondary hidden" id="busyExt" data-act="busyTakeClose">Take over and close the extended display</button>
+    <button class="quiet" data-act="busyNo">Not now</button>
+  </section>
+
+  <!-- Extended display -->
+  <section id="extend" class="card hidden" aria-label="Extended display">
+    <span class="glyph" data-icon="extend"></span>
+    <h1>Extended display</h1>
+    <p class="sub">Use this screen as a second monitor for the Mac. Drag windows onto it, and move the mouse across.</p>
+    <div class="spec"><span id="extSpec"></span><span class="pill" id="extState">Off</span></div>
+    <div class="group">
+      <div class="item"><span>Refresh rate<small>30 Hz uses less power on the Mac.</small></span>
+        <div class="seg"><button data-extfps="30">30 Hz</button><button data-extfps="60">60 Hz</button></div></div>
+    </div>
+    <p class="error" id="extErr"></p>
+    <button class="primary" id="extGo" data-act="extendGo">Start extended display</button>
+    <p class="note" id="extNote"></p>
+    <button class="quiet" data-act="extendClose">Close</button>
+  </section>
 
   <!-- More -->
   <div id="backdrop" class="hidden" data-act="close"></div>
@@ -114,6 +141,7 @@
         <span>Display</span>
         <div class="seg" id="displaySeg"></div>
       </div>
+      <button class="item link" data-act="extendPanel" data-close>Use this screen as an extended display…</button>
       <div class="item">
         <span>Input</span>
         <div class="seg"><button data-set="mode" data-value="trackpad">Trackpad</button><button data-set="mode" data-value="touch">Touch</button></div>

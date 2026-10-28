@@ -16,6 +16,7 @@ Go server with embedded Tailscale (`tsnet`), a Swift capture/input helper, and a
 | `security.go` | device password (Argon2id), 30-day device trust, live sessions, local control socket |
 | `stream.go` | viewer WebSocket: control, input dispatch (`forward`), WS video/input fallback, bitrate steering |
 | `rtc.go` | WebRTC (pion): video with true capture timestamps, GCC estimate; `input` (reliable) and `move` (unordered, no resends) data channels |
+| `vdisplay*.go` | extended display: a virtual second monitor (private CGVirtualDisplay via `go-macos/virtualdisplay`), child process `mydevices vdisplay` owns it, idle auto-close; never the main display |
 | `helper.go` | one warm `mydevices-capture` process shared across reconnects |
 | `capture/*.swift` | ScreenCaptureKit + VideoToolbox H.264, CGEvent input, "Screen shared" panel, settings window |
 | `web/viewer/` | the viewer (`app.js`); `classic/` + `novnc/` is the VNC fallback for the lock screen |
@@ -44,6 +45,8 @@ CGO_ENABLED=0 GOARCH=arm64 go vet .
 - **Clicks from absolute pointing (touch mode, mouse) carry their own `x`,`y`.** Moves travel on the unreliable `move` channel, so a click must not depend on the move before it having arrived.
 - **Every HTTP request passes `auth()` (tailnet owner via `WhoIs`).** On hub/standalone it also passes `requireSession` (device password trust plus session).
 - **Settings are only reachable over the Unix control socket,** with a peer-UID check. Never add network routes for them.
+- **The one exception is `extend` / `unextend`** (handled in `stream.go`, never sent to the helper). They create or remove a virtual display, in a child process, as an extra screen only: never change which display is main or the arrangement. Keep them bounded (sizes, 30/60 Hz only, one at a time, no faster than every 2 s), and never change a virtual display's mode once open.
+- **One streaming device at a time.** A different device gets a `busy` event and close code 4002 and must ask again with `?take=1`; a displaced device gets 4003 (reason = who) and must not auto-reconnect. Claiming and kicking happen under one lock (`claimStream`).
 - **The Mac's Stop button must stick.** The stream closes with code 4001 and new streams are refused for 2 minutes.
 - **The "Screen shared" panel is shown while anyone views,** and is excluded from capture.
 - **The helper always ends its capture session before exiting.** It runs in its own process group, and stops are made by closing its stdin, never by killing it outright. Otherwise macOS can leave a stuck "Unknown — Screen Recording" indicator.

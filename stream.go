@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -38,6 +39,7 @@ var allowedCmds = map[string]bool{
 	"start": true, "kf": true, "abs": true, "rel": true, "btn": true, "click": true,
 	"scroll": true, "key": true, "text": true, "media": true, "clip-set": true, "clip-get": true, "diag": true, "resend": true,
 	"displays": true,
+	"extend": true, "unextend": true, // handled in the server (vdisplay.go), never sent to the helper
 }
 
 func helperPath() string {
@@ -79,11 +81,32 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 	defer ws.CloseNow()
 	ws.SetReadLimit(1 << 20)
 
-	// One viewer at a time: a new session replaces the old one.
+	// One viewer at a time. A different device doesn't silently kick the one that's
+	// working (the two would fight, each reconnecting over the other): it is told who has
+	// the Mac and asks again with ?take=1 if the person chooses to take over. The same
+	// device reconnecting (a network blip, a second tab) just replaces its old stream.
+	viewer := a.viewerName(r)
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
-	viewer := a.viewerName(r)
-	defer trackSession("stream", viewer, cancel, true)()
+	var kicked atomic.Bool                  // another viewer took over: this stream may no longer touch the helper
+	var detachNow atomic.Pointer[func()]    // set once attached to the helper
+	by, release := claimStream(viewer, r.URL.Query().Get("take") == "1", func(by string) {
+		kicked.Store(true)
+		if d := detachNow.Load(); d != nil {
+			(*d)()
+		}
+		go func() { ws.Close(closeTakenOver, by); cancel() }()
+	})
+	if by != "" {
+		b, _ := json.Marshal(map[string]any{"t": "busy", "by": by, "extended": extendedOpen()})
+		ws.Write(r.Context(), websocket.MessageText, b)
+		ws.Close(closeBusy, by)
+		return
+	}
+	defer release()
+	defer trackSession("stream", viewer, cancel, false)()
+	extViewerJoined()
+	defer extViewerLeft()
 	go func() { <-ctx.Done(); ws.CloseNow() }()
 	go a.watchAuth(ctx, r, cancel)
 
@@ -100,7 +123,11 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 		ws.Close(websocket.StatusInternalError, "capture helper failed to start")
 		return
 	}
-	toHelper := h.send
+	toHelper := func(v any) {
+		if !kicked.Load() {
+			h.send(v)
+		}
+	}
 
 	out := make(chan outMsg, 256)
 	push := func(m outMsg) {
@@ -164,6 +191,7 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 				a.audit("stopped-on-mac", viewer, "")
 				blockStreams(stopHold) // the viewer must not simply reconnect
 				h.kill()               // Stop pressed on the Mac's panel
+				go closeExtended()     // and the extended display goes with it
 				ws.Close(closeStoppedOnMac, "stopped on the Mac")
 				cancel()
 				return
@@ -198,7 +226,9 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 			push(outMsg{typ: websocket.MessageBinary, data: buf, key: key})
 		}
 	})
-	defer detach()
+	detachOnce := sync.OnceFunc(detach)
+	detachNow.Store(&detachOnce)
+	defer detachOnce()
 	go func() {
 		select {
 		case <-h.dead:
@@ -314,6 +344,9 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 	// One input command, from the WebSocket or a data channel. "start" and WebRTC
 	// negotiation only come over the WebSocket, handled below.
 	forward := func(c map[string]any, reply func([]byte)) {
+		if kicked.Load() {
+			return
+		}
 		t, _ := c["t"].(string)
 		switch {
 		case t == "spong": // reply to the rate controller's path probe (rtc.go probeLoop)
@@ -330,6 +363,29 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 			reply(b)
 		case t == "vstats": // the phone's own receive stats, only while recording (vrec.go)
 			writeViewerRec("phone", c)
+		case t == "extend": // make a virtual second display sized to this browser (vdisplay.go)
+			w, _ := c["w"].(float64)
+			h, _ := c["h"].(float64)
+			hz, _ := c["hz"].(float64)
+			go func() {
+				id, err := extendDisplay(uint32(max(w, 0)), uint32(max(h, 0)), hz)
+				ev := map[string]any{"t": "extended", "id": id}
+				if err != nil {
+					log.Printf("extend: %v", err)
+					ev = map[string]any{"t": "extended", "error": err.Error()}
+				}
+				b, _ := json.Marshal(ev)
+				reply(b)
+			}()
+		case t == "unextend":
+			go func() {
+				ev := map[string]any{"t": "extended", "id": 0}
+				if err := closeExtended(); err != nil {
+					ev["note"] = err.Error()
+				}
+				b, _ := json.Marshal(ev)
+				reply(b)
+			}()
 		case allowedCmds[t] && t != "start":
 			limit := 4096
 			if t == "clip-set" {
@@ -413,6 +469,12 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 			if mb, ok := c["maxbr"].(float64); ok && mb >= minBitrate {
 				maxBitrate.Store(min(int64(mb), 50_000_000))
 			}
+			if id, hz, ok := extendedInfo(); ok {
+				if d, _ := c["display"].(float64); uint32(d) == id {
+					c["fps"] = hz // the display's own rate, whatever the viewer asked
+					maxBitrate.Store(min(maxBitrate.Load(), extMaxBitrate(hz)))
+				}
+			}
 			c["br"] = min(bitrate.Load(), maxBitrate.Load())
 			c["viewer"] = viewer
 			toHelper(c)
@@ -446,6 +508,8 @@ func notify(title, body string) {
 // viewer can't just reconnect. The viewer is told why and stops retrying.
 const (
 	closeStoppedOnMac websocket.StatusCode = 4001
+	closeBusy         websocket.StatusCode = 4002 // another device has the Mac: asks before taking over
+	closeTakenOver    websocket.StatusCode = 4003 // another device took over; the reason is its name
 	stopHold                               = 2 * time.Minute
 )
 
@@ -474,5 +538,48 @@ func (a *app) watchAuth(ctx context.Context, r *http.Request, cancel func()) {
 			cancel()
 			return
 		}
+	}
+}
+
+// The streams open right now, so a second device can be told about the first instead of
+// kicking it.
+var streamReg struct {
+	sync.Mutex
+	next int
+	m    map[int]regStream
+}
+
+type regStream struct {
+	viewer string
+	kick   func(by string)
+}
+
+// claimStream registers a stream unless a different device already has the Mac (and this
+// isn't a takeover), in which case it returns that device's name. Checking, kicking the
+// old streams and registering happen under one lock, so two devices connecting at once
+// can't both end up registered.
+func claimStream(viewer string, take bool, kick func(string)) (busyBy string, release func()) {
+	streamReg.Lock()
+	defer streamReg.Unlock()
+	if !take {
+		for _, s := range streamReg.m {
+			if s.viewer != viewer {
+				return s.viewer, nil
+			}
+		}
+	}
+	for _, s := range streamReg.m {
+		s.kick(viewer) // only flags, detaches and closes in the background: never takes this lock
+	}
+	if streamReg.m == nil {
+		streamReg.m = map[int]regStream{}
+	}
+	streamReg.next++
+	id := streamReg.next
+	streamReg.m[id] = regStream{viewer, kick}
+	return "", func() {
+		streamReg.Lock()
+		delete(streamReg.m, id)
+		streamReg.Unlock()
 	}
 }

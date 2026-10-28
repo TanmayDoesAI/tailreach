@@ -28,6 +28,7 @@ const settings = {
   natural: store.get('natural', true),
   mode: store.get('mode', 'trackpad'),   // 'trackpad' | 'touch'
   display: store.get('display', 0),      // the Mac's display to show; 0 = its main one
+  extHz: store.get('extHz', 30),         // refresh rate asked of the extended display: 30 is plenty and costs the Mac less
 };
 
 const canvas = $('#screen');
@@ -85,16 +86,23 @@ async function boot() {
   connect();
 }
 
+let takeNext = false;      // the next connection takes the Mac from whoever has it
+let closeExtNext = false;  // ...and removes the extended display once it's in
+
 function connect() {
   if (ws || stopped) return;
   setState('connecting', retry ? 'Reconnecting' : 'Connecting');
   const url = new URL('stream', location.href);
+  if (takeNext) url.searchParams.set('take', '1');
   url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   ws = new WebSocket(url);
   ws.binaryType = 'arraybuffer';
 
   ws.onopen = () => {
     retry = 0;
+    extBusy = false;
+    if (takeNext && closeExtNext) send({ t: 'unextend' });
+    takeNext = closeExtNext = false;
     sendStart();
     keepAwake();
     startRTC();   // video starts on the WebSocket and moves to WebRTC once it connects
@@ -108,6 +116,8 @@ function connect() {
     resetDecoder();
     if (stopped) return;
     if (e.code === 4001) return stoppedOnMac();
+    if (e.code === 4002) return inUse(e.reason);
+    if (e.code === 4003) return takenOver(e.reason);
     if (!opened && retry >= 1) {
       // Refused before it opened: find out why instead of retrying blindly.
       const r = await fetch('stream', { cache: 'no-store' }).catch(() => null);
@@ -126,7 +136,46 @@ function sendStart() {
   const side = Math.min(p.maxSide, Math.round(Math.max(screen.width, screen.height) * devicePixelRatio));
   // rtcFirst: no WebSocket video while WebRTC connects. Over a relay (just after a
   // network switch) it would run seconds behind; the last frame waits instead.
-  send({ t: 'start', w: side, h: side, fps: +settings.fps, maxbr: p.maxbr, localCursor: true, display: settings.display, rtcFirst: rtcWanted() });
+  send({ t: 'start', w: side, h: side, fps: extShown() ? settings.extHz : +settings.fps, maxbr: p.maxbr, localCursor: true, display: settings.display, rtcFirst: rtcWanted() });
+}
+
+// Another device has the Mac. Ask, instead of kicking it (which makes the two fight).
+let busyInfo = { extended: false };
+function inUse(by) {
+  stopped = true;   // no automatic retries while the question is open
+  hasFrame = false;
+  setState('off', '');
+  $('#busyBy').textContent = by || 'another device';
+  $('#busyExt').classList.toggle('hidden', !busyInfo.extended);
+  $('#busy').classList.remove('hidden');
+}
+
+function leaveBusy(take, closeExt) {
+  $('#busy').classList.add('hidden');
+  if (!take) { setState('off', 'Not connected: the Mac is in use.'); splashAction('Try again', ''); const a = $('#splashAction'); a.onclick = (e) => { e.preventDefault(); a.classList.add('hidden'); a.onclick = null; stopped = false; retry = 0; connect(); }; return; }
+  takeNext = true;
+  closeExtNext = closeExt;
+  stopped = false;
+  retry = 0;
+  connect();
+}
+
+// Another device took over this one's stream: say so, and stay put until asked.
+function takenOver(by) {
+  stopped = true;
+  hasFrame = false;
+  setState('off', `${by || 'Another device'} took over this Mac.`);
+  const a = $('#splashAction');
+  splashAction('Take it back', '');
+  a.onclick = (e) => {
+    e.preventDefault();
+    a.classList.add('hidden');
+    a.onclick = null;
+    takeNext = true;
+    stopped = false;
+    retry = 0;
+    connect();
+  };
 }
 
 function stoppedOnMac() {
@@ -391,7 +440,18 @@ function onEvent(ev) {
       markDisplays();
       drawCursor();
       break;
-    case 'displays': displays = ev.list; markDisplays(); break;
+    case 'displays': displays = ev.list; markDisplays(); if (pendingExt) finishExtend(pendingExt, true); break;
+    case 'busy': busyInfo = ev; break;
+    case 'extended':
+      extBusy = false;
+      if (ev.error) { $('#extErr').textContent = ev.error; markExtend(); break; }
+      // The Mac announces the new display a moment later: switch to it when it shows up in
+      // the list (or after 2 s regardless). 0 means it was removed.
+      if (!ev.id) { chooseDisplay(0); if (ev.note) flash(ev.note); break; }
+      pendingExt = ev.id;
+      setTimeout(() => finishExtend(ev.id), 2000);
+      finishExtend(ev.id, true);
+      break;
     case 'cursor':
       // The Mac's position is the truth, but while you're moving it we trust our prediction.
       macCursor = ev;
@@ -553,6 +613,7 @@ function displayLabel(d) {
 }
 
 function markDisplays() {
+  markExtend();
   const seg = $('#displaySeg');
   $('#displayRow').classList.toggle('hidden', displays.length < 2);
   seg.replaceChildren(...displays.map((d) => {
@@ -1084,6 +1145,7 @@ const ICON_PATHS = {
   sunDim:       '<circle cx="12" cy="12" r="3.5"/><path d="M12 5.5v.01M12 18.5v.01M5.5 12h.01M18.5 12h.01M7.4 7.4h.01M16.6 16.6h.01M7.4 16.6h.01M16.6 7.4h.01"/>',
   sun:          '<circle cx="12" cy="12" r="3.5"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6L7 7M17 17l1.4 1.4M5.6 18.4L7 17M17 7l1.4-1.4"/>',
   x:            '<path d="M7 7l10 10M17 7L7 17"/>',
+  extend:       '<rect x="2.5" y="5" width="11" height="8" rx="1.5"/><rect x="10.5" y="9" width="11" height="8" rx="1.5" fill="var(--bg)"/><path d="M7 20h8"/>',
 };
 function icon(name) {
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON_PATHS[name] || ''}</svg>`;
@@ -1155,7 +1217,7 @@ const actions = {
   },
   keyboard: toggleKeyboard,
   more: () => openSheet($('#more').classList.contains('hidden')),
-  close: () => openSheet(false),
+  close: () => { openSheet(false); openExtend(false); },
   mode: () => setMode(settings.mode === 'trackpad' ? 'touch' : 'trackpad'),
   showBar: () => { document.body.classList.remove('bar-hidden'); fitViewport(); },
   typeText: () => send({ t: 'text', s: $('#clipText').value }),
@@ -1178,7 +1240,86 @@ const actions = {
   toastClose: () => $('#toast').classList.add('hidden'),
   fit: () => fitMode('fit'),
   fillScreen: () => fitMode('fill'),
+  busyTake: () => leaveBusy(true, false),
+  busyTakeClose: () => leaveBusy(true, true),
+  busyNo: () => leaveBusy(false, false),
+  extendPanel: () => openExtend(true),
+  extendClose: () => openExtend(false),
+  extendGo: () => (extActive() ? stopExtend() : startExtend()),
 };
+
+// ---------- extended display ----------
+// Ask the Mac for a virtual second display the size of this screen, then show it. From a
+// laptop or desktop browser it goes full screen, and the mouse then works like a monitor's.
+const EXT_NAME = 'Extended display';   // matches vdisplay.go
+const extActive = () => displays.some((d) => d.name === EXT_NAME);
+const extShown = () => displays.some((d) => d.name === EXT_NAME && d.id === shownDisplay);
+let extBusy = false;
+
+function extSpec() {
+  return {
+    w: Math.round(screen.width * devicePixelRatio),
+    h: Math.round(screen.height * devicePixelRatio),
+    hz: settings.extHz,
+  };
+}
+
+function markExtend() {
+  const on = extActive(), s = extSpec();
+  $('#extSpec').textContent = `${s.w} × ${s.h} · ${s.hz} Hz`;
+  $('#extState').textContent = extBusy ? 'Starting…' : on ? 'On' : 'Off';
+  $('#extend').classList.toggle('on', on);
+  $('#extendBtn').classList.toggle('live', on);
+  $('#extGo').textContent = on ? 'Stop extended display' : 'Start extended display';
+  $('#extGo').disabled = extBusy;
+  $('#extNote').textContent = on
+    ? 'It closes by itself 5 minutes after you leave this page.'
+    : 'Only the screen is shared: no files and no commands.';
+  document.querySelectorAll('[data-extfps]').forEach((b) => b.classList.toggle('on', +b.dataset.extfps === s.hz));
+}
+
+let pendingExt = 0;   // the extended display's ID, until the viewer has switched to it
+function finishExtend(id, needListed = false) {
+  if (pendingExt !== id) return;
+  if (needListed && !displays.some((d) => d.id === id)) return;
+  pendingExt = 0;
+  chooseDisplay(id);
+  openExtend(false);
+}
+
+function openExtend(open) {
+  $('#extend').classList.toggle('hidden', !open);
+  $('#backdrop').classList.toggle('hidden', !open);
+  if (open) { $('#extErr').textContent = ''; kbd.blur(); markExtend(); }
+}
+
+function sendExtend() {
+  const s = extSpec();
+  extBusy = true;
+  markExtend();
+  send({ t: 'extend', w: s.w, h: s.h, hz: s.hz });
+}
+
+function startExtend() {
+  $('#extErr').textContent = '';
+  sendExtend();
+  document.documentElement.requestFullscreen?.().catch(() => {});   // needs this tap
+}
+
+function stopExtend() {
+  extBusy = true;
+  markExtend();
+  send({ t: 'unextend' });
+}
+
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-extfps]');
+  if (!b || +b.dataset.extfps === extSpec().hz) return;
+  settings.extHz = +b.dataset.extfps;
+  store.set('extHz', settings.extHz);
+  if (extActive()) sendExtend();   // a new refresh rate means a new display
+  else markExtend();
+});
 
 function setMode(m) {
   settings.mode = m;

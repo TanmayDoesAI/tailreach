@@ -151,3 +151,7 @@ rm -rf ~/Library/Application\ Support/mydevices   # forgets the Tailscale node, 
 ```
 
 Then remove the `devices` machine in the Tailscale admin console, and the permission entries in System Settings.
+
+## Extended display (optional)
+
+Needs no extra permission beyond Screen Recording: the virtual display is created by the login item itself. See "Extended display" in the README.

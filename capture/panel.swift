@@ -30,7 +30,12 @@ final class SharePanel {
     func show(viewer: String) {
         if !panel.isVisible {
             model.started = Date()
-            if let f = NSScreen.main?.visibleFrame {
+            // On a physical screen, not the virtual one: it's excluded from capture, so on a
+            // virtual main display nobody could see it or press Stop.
+            let physical = NSScreen.screens.first { s in
+                (s.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID).map(CGDisplayIsBuiltin) == 1
+            }
+            if let f = (physical ?? NSScreen.main)?.visibleFrame {
                 panel.setFrameOrigin(NSPoint(x: f.maxX - panel.frame.width - 12, y: f.maxY - panel.frame.height - 12))
             }
         }
