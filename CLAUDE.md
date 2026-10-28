@@ -35,6 +35,10 @@ CGO_ENABLED=0 GOARCH=arm64 go vet .
 - **Never run `mydevices-capture` directly, and test against the login item (`make reload`), not a terminal-run hub.**
   - macOS credits screen recording to whatever app launched the process, so a terminal run shows the terminal as "sharing".
   - The helper refuses to start unless mydevices launched it (`MYDEVICES_PARENT`).
+- **Debug logging:** `make DEBUG=1 reload`.
+  - Use `dlog(...)` in Go and `dlog(...)` in Swift for anything worth seeing while debugging. Both compile to nothing in a normal build, so don't use `log.Printf` for chatty lines.
+  - In Go, put any extra work for a log line inside `if debugLog { … }`.
+  - The viewer's `dlog` only runs when a debug build sends `{"t":"debug"}`. It reaches the log as a `dlog` message, which the server accepts only in debug builds.
 - Web files are embedded at build time. Run with `--web-dir ./web` to edit the UI without rebuilding.
 - Swift builds with Command Line Tools only (`swiftc -swift-version 5`). There are no SwiftUI macros like `@State`; use `ObservableObject`.
 - The binary, signing identifiers (`com.mydevices.*`) and state dir keep the `mydevices` name **on purpose**: changing them resets the macOS permissions users have granted.

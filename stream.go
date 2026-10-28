@@ -118,8 +118,13 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 		a.audit("stream-end", viewer, time.Since(start).Round(time.Second).String())
 	}()
 
+	if debugLog { // the viewer logs too, into this log (see "dlog" below)
+		ws.Write(ctx, websocket.MessageText, []byte(`{"t":"debug"}`))
+	}
+
 	h, err := warmHelper()
 	if err != nil {
+		dlog("capture helper failed to start: %v", err)
 		ws.Close(websocket.StatusInternalError, "capture helper failed to start")
 		return
 	}
@@ -218,6 +223,7 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 				waitKey = true
 				congested.Store(true)
 				br := max(minBitrate, bitrate.Load()*6/10)
+				dlog("websocket backlog: skipping to a keyframe at %d kbps", br/1000)
 				bitrate.Store(br)
 				toHelper(map[string]any{"t": "br", "bps": br})
 				toHelper(map[string]any{"t": "kf"})
@@ -292,6 +298,8 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 			s.rateBps.Store(br)
 			ctlState.Store(map[string]any{"q": q, "loss": loss, "good": ctl.good, "cutAt": ctl.cutAt, "sentBps": sentBps})
 			if d := br - bitrate.Load(); d > br/20 || -d > br/20 {
+				dlog("rate %d → %d kbps (queue %d ms, loss %.0f%%, sent %d kbps, last good %d kbps)",
+					bitrate.Load()/1000, br/1000, q, loss*100, sentBps/1000, ctl.good/1000)
 				bitrate.Store(br)
 				toHelper(map[string]any{"t": "br", "bps": br})
 			}
@@ -355,7 +363,12 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		case t == "bye": // the viewer is leaving (page hidden or closed): end now, not at a timeout
+			dlog("viewer said bye")
 			cancel()
+		case t == "dlog" && debugLog: // the viewer's own debug lines (debug builds only)
+			if s, ok := c["s"].(string); ok {
+				log.Printf("· [viewer] %.300s", s)
+			}
 		case t == "ping":
 			c["t"] = "pong"
 			b, _ := json.Marshal(c)
@@ -429,6 +442,7 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 		t, _ := c["t"].(string)
 		switch {
 		case t == "rtc-offer":
+			dlog("webrtc offer from the viewer")
 			sdp, _ := c["sdp"].(string)
 			if old := rtc.Swap(nil); old != nil {
 				old.close()
@@ -445,6 +459,7 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 					log.Printf("▶ %s: video over WebRTC", viewer)
 				},
 				func() { // failed: back to the WebSocket
+					dlog("webrtc down: video goes back to the WebSocket while the stream lasts")
 					toHelper(map[string]any{"t": "resend"})
 					push(outMsg{typ: websocket.MessageText, data: jsonMsg(map[string]any{"t": "rtc-failed"})})
 				}, onInput)
@@ -456,6 +471,7 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 			rtc.Store(sess)
 			push(outMsg{typ: websocket.MessageText, data: jsonMsg(map[string]any{"t": "rtc-answer", "sdp": answer})})
 		case t == "rtc-off":
+			dlog("viewer turned WebRTC off: video on the WebSocket")
 			holdWS.Store(false)
 			if old := rtc.Swap(nil); old != nil {
 				old.close()
@@ -476,6 +492,8 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 			}
 			c["br"] = min(bitrate.Load(), maxBitrate.Load())
 			c["viewer"] = viewer
+			dlog("start: %vx%v at %v fps, display %v, max %d kbps, WebRTC first %v",
+				c["w"], c["h"], c["fps"], c["display"], maxBitrate.Load()/1000, first)
 			toHelper(c)
 		default:
 			forward(c, replyWS)

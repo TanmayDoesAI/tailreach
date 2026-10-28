@@ -171,6 +171,7 @@ func (a *app) newRTC(offer string, onKeyframe, onConnected, onFailed func(),
 						s.lastKF = time.Now()
 					}
 					s.mu.Unlock()
+					dlog("keyframe request from the viewer (%T), sent: %v", p, due)
 					if due {
 						onKeyframe()
 					}
@@ -184,12 +185,13 @@ func (a *app) newRTC(offer string, onKeyframe, onConnected, onFailed func(),
 			dc.Close()
 			return
 		}
-		if label == "move" {
-			dc.OnOpen(func() {
+		dc.OnOpen(func() {
+			dlog("data channel %q open", label)
+			if label == "move" {
 				s.move.Store(dc)
 				go s.probeLoop()
-			})
-		}
+			}
+		})
 		dc.OnMessage(func(m webrtc.DataChannelMessage) {
 			if m.IsString {
 				onInput(m.Data, func(b []byte) { dc.SendText(string(b)) })
@@ -197,6 +199,15 @@ func (a *app) newRTC(offer string, onKeyframe, onConnected, onFailed func(),
 		})
 	})
 	pc.OnConnectionStateChange(func(st webrtc.PeerConnectionState) {
+		dlog("webrtc %s", st)
+		if debugLog && st == webrtc.PeerConnectionStateConnected {
+			if t := pc.SCTP().Transport().ICETransport(); t != nil {
+				if pair, err := t.GetSelectedCandidatePair(); err == nil && pair != nil {
+					dlog("webrtc path: %s:%d (%s) ↔ %s:%d (%s)", pair.Local.Address, pair.Local.Port, pair.Local.Typ,
+						pair.Remote.Address, pair.Remote.Port, pair.Remote.Typ)
+				}
+			}
+		}
 		switch st {
 		case webrtc.PeerConnectionStateConnected:
 			if !s.connected.Swap(true) {

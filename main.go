@@ -70,7 +70,11 @@ func main() {
 			exitOn(openSettings(os.Args[2:]))
 			return
 		case "version":
-			fmt.Println(version)
+			if debugLog {
+				fmt.Println(version, "(debug build)")
+			} else {
+				fmt.Println(version)
+			}
 			return
 		case "vdisplay": // internal: owns the extended display (see vdisplay.go)
 			os.Exit(vdisplayChild(os.Args[2:]))
@@ -208,6 +212,7 @@ func run(o options) error {
 
 	base := "https://" + a.selfDNS
 	log.Printf("✓ Signed in as %s on %s", a.owner, st.CurrentTailnet.Name)
+	dlog("debug build: debug logging is on (lines marked ·)")
 	if o.hub {
 		log.Printf("✓ Dashboard:  %s/   (or type %s/ in a browser on your tailnet)", base, hostname)
 		log.Printf("✓ This Mac:   %s/%s/", base, o.name)

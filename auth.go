@@ -189,6 +189,7 @@ func (a *app) requireSession(next http.Handler) http.Handler {
 			http.Redirect(w, r, "/login?next="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
 			return
 		}
+		dlog("sign-in required for %s", r.URL.Path)
 		http.Error(w, "sign in required", http.StatusUnauthorized)
 	})
 }

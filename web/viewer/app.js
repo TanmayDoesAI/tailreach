@@ -113,6 +113,7 @@ function connect() {
   let opened = false;
   ws.addEventListener('open', () => { opened = true; });
   ws.onclose = async (e) => {
+    dlog('websocket closed', e.code, e.reason || '');
     ws = null;
     stopRTC(false, true);
     resetDecoder();
@@ -208,6 +209,17 @@ function send(obj) {
   if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj));
 }
 
+// Debug logging: only when the Mac runs a debug build (`make DEBUG=1`), which says so as the
+// stream opens. Lines go to the console and into the Mac's log, so a phone can be debugged
+// without Safari's inspector. Otherwise dlog returns at once.
+let debugOn = false;
+function dlog(...parts) {
+  if (!debugOn) return;
+  const s = parts.map((p) => (typeof p === 'string' ? p : JSON.stringify(p))).join(' ');
+  console.debug('[tailreach]', s);
+  send({ t: 'dlog', s: s.slice(0, 300) });
+}
+
 // Drop the connection while the app is in the background; resume instantly on return.
 // Leaving says so at once (iOS may freeze the page before a WebSocket close gets out),
 // so the Mac's "Screen shared" panel goes away immediately rather than after a timeout.
@@ -217,6 +229,7 @@ function leave() {
   ws?.close();
 }
 document.addEventListener('visibilitychange', () => {
+  dlog('page', document.visibilityState);
   if (document.visibilityState === 'hidden') leave();
   else connect();
 });
@@ -337,6 +350,7 @@ async function startRTC(keepPicture = false) {
     };
     pc.onconnectionstatechange = () => {
       if (!pc) return;
+      dlog('webrtc', pc.connectionState);
       clearTimeout(rtcStall);
       if (['failed', 'closed'].includes(pc.connectionState)) reofferRTC();
       // 'disconnected' often recovers by itself (a 5G dip); if it doesn't, connect afresh.
@@ -368,12 +382,14 @@ let rtcLive = false;   // frames are arriving over the current connection
 function reofferRTC() {
   if (!ws || ws.readyState !== 1) return;   // the WebSocket reconnect starts WebRTC itself
   if (rtcReoffers++ >= 2) return fallbackToWS();
+  dlog('webrtc re-offer, try', rtcReoffers);
   setState('connecting', 'Reconnecting');
   startRTC(true);
 }
 
 function fallbackToWS() {
   if (!pc) return;
+  dlog('webrtc gave up: video on the WebSocket; next try in', 5 * 2 ** rtcRetries, 's');
   stopRTC(true);
   // Video carries on over the WebSocket; try WebRTC again a little later (backing off).
   clearTimeout(rtcRetry);
@@ -436,6 +452,7 @@ function onVideoFrame(now, meta, polled, gen) {
 
 function onEvent(ev) {
   switch (ev.t) {
+    case 'debug': debugOn = true; dlog('viewer', navigator.userAgent, `${screen.width}x${screen.height}@${devicePixelRatio}`); break;
     case 'started':
       screenPts.w = ev.ptW; screenPts.h = ev.ptH;
       shownDisplay = ev.display;

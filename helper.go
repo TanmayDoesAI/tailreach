@@ -65,9 +65,10 @@ func warmHelper() (*captureHelper, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
+	dlog("capture helper started (pid %d)", cmd.Process.Pid)
 	h := &captureHelper{cmd: cmd, stdin: stdin, dead: make(chan struct{})}
 	go h.read(stdout)
-	go func() { cmd.Wait(); close(h.dead) }()
+	go func() { err := cmd.Wait(); dlog("capture helper exited (%v)", err); close(h.dead) }()
 	h.mu.Lock()
 	h.scheduleIdle()
 	h.mu.Unlock()

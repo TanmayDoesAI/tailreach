@@ -57,6 +57,17 @@ func log(_ s: String) {
     FileHandle.standardError.write("[capture] \(s)\n".data(using: .utf8)!)
 }
 
+/// Debug logging, compiled in only by `make DEBUG=1` (-D DEBUG_LOG). The message is an
+/// autoclosure, so a normal build never even builds the string.
+@inline(__always) func dlog(_ msg: @autoclosure () -> String) {
+    #if DEBUG_LOG
+    FileHandle.standardError.write("\(dlogTime.string(from: Date())) · [capture] \(msg())\n".data(using: .utf8)!)
+    #endif
+}
+#if DEBUG_LOG
+private let dlogTime: DateFormatter = { let f = DateFormatter(); f.dateFormat = "HH:mm:ss"; return f }()
+#endif
+
 // MARK: - Encoder (VideoToolbox, hardware H.264, low-latency rate control)
 
 final class Encoder {
@@ -100,6 +111,7 @@ final class Encoder {
 
     func setBitrate(_ bps: Int) {
         bitrate = max(500_000, min(bps, 50_000_000))
+        dlog("encoder bitrate \(bitrate / 1000) kbps")
         guard let s = session else { return }
         VTSessionSetProperty(s, key: kVTCompressionPropertyKey_AverageBitRate, value: bitrate as CFNumber)
     }
@@ -181,6 +193,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         }
         retries += 1
         let delay = 0.3 * pow(2, Double(retries - 1))
+        dlog("capture start failed (\(why)), retry \(retries) in \(delay) s")
         log("capture interrupted (\(why)); retry \(retries) in \(delay)s")
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
             guard viewing else { return }
@@ -194,6 +207,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         wanted = (maxW, maxH, fps, cursor, display)
         let p = [maxW, maxH, fps, cursor ? 1 : 0, Int(display)]
         if stream != nil, p == params {
+            dlog("start: same settings, still capturing: fresh keyframe only")
             resendConfig()
             event(startedEvent)
             return
@@ -243,6 +257,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
             retries = 0
             shownDisplay = d.displayID // input and cursor reports follow the display being shown
             startRefineTimer()
+            dlog("capturing display \(d.displayID) at \(w)x\(h) (native \(Int(nativeW))x\(Int(nativeH))), \(fps) fps, \(enc.bitrate / 1000) kbps")
             startedEvent = ["t": "started", "w": w, "h": h, "nativeW": Int(nativeW), "nativeH": Int(nativeH),
                             "ptW": Double(filter.contentRect.width), "ptH": Double(filter.contentRect.height),
                             "display": Int(d.displayID)]
@@ -257,6 +272,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     func stop() async {
+        dlog("capture stopped")
         wanted = nil
         timer?.cancel()
         if let s = stream { try? await s.stopCapture() }
@@ -303,7 +319,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         timer = t
     }
 
-    func requestKeyframe() { q.async { self.enc.forceKey = true; self.encodeNowIfIdle() } }
+    func requestKeyframe() { dlog("keyframe requested"); q.async { self.enc.forceKey = true; self.encodeNowIfIdle() } }
     func resendConfig() { q.async { self.enc.resendConfig(); self.encodeNowIfIdle() } }
 
     /// A still screen produces no frames; answer a keyframe request right away from the

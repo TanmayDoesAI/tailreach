@@ -183,6 +183,13 @@ make            # → dist/mydevices-{darwin-arm64,darwin-amd64,linux-amd64,linu
 
 On Linux or Windows, point `--vnc` at any VNC server (e.g. `--vnc 127.0.0.1:5901`).
 
+**Debug logging.** Build with `make DEBUG=1 reload` (or `local`, `run`, `all`).
+
+- **What it logs:** stream setup, every WebRTC state change and the network path it took (direct or relayed), rate changes, keyframe requests, the capture helper's settings, and why a request was refused.
+- **The viewer logs too,** into the same file, so a phone can be debugged without Safari's inspector.
+- **Where:** debug lines are marked `·` in `~/Library/Application Support/mydevices/mydevices.log` (`tail -f` it).
+- **Cost:** a normal build doesn't contain any of it (Go build tag, Swift `-D DEBUG_LOG`). Either way, nothing runs while nobody is viewing: the capture helper exits a minute after the last viewer leaves.
+
 `CLAUDE.md` lists the rules the code must keep: what a viewer may and may not do, how the capture helper stops, and so on. Read it before changing anything security-related.
 
 ## License

@@ -219,6 +219,7 @@ func (a *app) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		who, err := a.lc.WhoIs(r.Context(), r.RemoteAddr)
 		if err != nil || who.Node == nil || who.UserProfile == nil {
+			dlog("denied %s from %s: not identified on the tailnet (%v)", r.URL.Path, r.RemoteAddr, err)
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
