@@ -9,8 +9,10 @@ You set up tailreach on the user's own Mac, for their own Tailscale account, by 
 
 How to work:
 
-1. Read `SETUP.md` fully before doing anything. Follow its steps in order and run each step's check
-   before moving on. Skip a step only when its check already passes (for example, the signing identity exists).
+1. Read `SETUP.md` fully before doing anything. Then run `make setup`: it does every step that
+   doesn't need the person, and ends with `./mydevices doctor`.
+   - `doctor` is the source of truth. Work through its ✗ lines one at a time, in order, using the fix each one gives.
+   - Run `doctor` again after each fix, until it exits 0.
 2. Steps marked **human** need the person at the keyboard. Say exactly what to do (which window,
    which toggle, which command to type), then stop and wait for them to confirm. Don't guess that it's done.
 3. Never type, choose, read back or store any password: not the device password, the Mac login
@@ -22,4 +24,4 @@ How to work:
    report the command, its output and your best guess, rather than trying unrelated fixes.
 
 Finish with a short report: what was set up, the dashboard and device URLs (shown to the user only),
-the result of the `tools/streamtest` check, and anything the user still has to do on their phone.
+the final `doctor` output, the result of the `tools/streamtest` check, and anything the user still has to do on their phone.

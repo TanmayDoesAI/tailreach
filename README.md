@@ -27,27 +27,37 @@ A native Windows host (fast stream and extended display) is on the roadmap.
 
 ## Get started
 
-Follow [`SETUP.md`](SETUP.md). It takes about ten minutes on a Mac: build, grant two permissions, sign in to Tailscale, set a device password.
+You need a Mac with the Xcode Command Line Tools and Go, a Tailscale account, and the Tailscale app on your phone.
 
-With [Claude Code](https://claude.com/claude-code), you can also ask it to *"set up tailreach on this Mac"*. The `tailreach-setup` agent in `.claude/agents/` follows the same guide and stops for the steps only you can do.
+```sh
+git clone https://github.com/TanmayDoesAI/tailreach.git && cd tailreach
+make setup
+```
+
+`make setup` builds tailreach, signs it, and makes it start at login. It finishes with `./mydevices doctor`, which checks everything and tells you what's left, with the exact fix for each:
+
+- approving the Tailscale sign-in;
+- choosing a device password;
+- switching on Screen Recording and Accessibility.
+
+Fix those, run `./mydevices doctor` again until it's happy, then open the link it prints on your phone. In Safari, **Share → Add to Home Screen** gives it an app icon and full screen.
+
+**With a coding agent** (Claude Code, Codex, Cursor…), open it in the cloned folder and say:
+
+> Set up tailreach on this Mac by following SETUP.md. Stop and tell me whenever I need to do something myself.
+
+The agent reads `AGENTS.md` and `SETUP.md`. They tell it never to set your passwords or privacy settings, and never to approve the sign-in for you. The step-by-step version for people is in [`SETUP.md`](SETUP.md) too.
 
 > The program is called `mydevices` on disk (binary, login item, settings folder). Renaming it would reset the macOS permissions of existing installs.
 
+**More computers:** on each one, clone the repo and run:
+
 ```sh
-# On the main Mac (prints a Tailscale login link the first time):
-./mydevices --hub --name mac
-
-# On other computers (reachable through the hub):
-./mydevices --name mac2
-#    or on its own, with its own sign-in:
-./mydevices --name mac2 --via ""
-
-# Start automatically at login (same flags):
-./mydevices install --hub --name mac
-./mydevices uninstall
+make setup FLAGS='--name mac2'              # shown at /mac2/ on the first Mac's dashboard
+make setup FLAGS='--name mac2 --via ""'     # or on its own, with its own sign-in
 ```
 
-Then open the dashboard on your phone. In Safari, **Share → Add to Home Screen** gives it an app icon and full screen.
+`./mydevices uninstall` removes the login item.
 
 ## Using it
 
@@ -167,6 +177,7 @@ Tip: in the Tailscale admin console's access controls, you can also limit which 
 | Dashboard / sign-in pages | `web/dashboard/`, `web/login.html` |
 | Lock-screen VNC fallback | `web/viewer/classic/`, `web/viewer/novnc/` (upstream noVNC 1.7.0, unmodified) |
 | Stream tests on a simulated bad network | `go test ./...`, `tools/streambench` |
+| How the stream and its rate control work | [`docs/streaming.md`](docs/streaming.md) |
 
 Edit the UI live without rebuilding:
 
@@ -190,7 +201,7 @@ On Linux or Windows, point `--vnc` at any VNC server (e.g. `--vnc 127.0.0.1:5901
 - **Where:** debug lines are marked `·` in `~/Library/Application Support/mydevices/mydevices.log` (`tail -f` it).
 - **Cost:** a normal build doesn't contain any of it (Go build tag, Swift `-D DEBUG_LOG`). Either way, nothing runs while nobody is viewing: the capture helper exits a minute after the last viewer leaves.
 
-`CLAUDE.md` lists the rules the code must keep: what a viewer may and may not do, how the capture helper stops, and so on. Read it before changing anything security-related.
+`AGENTS.md` lists the rules the code must keep: what a viewer may and may not do, how the capture helper stops, and so on. Read it before changing anything security-related.
 
 ## License
 

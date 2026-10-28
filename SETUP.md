@@ -1,6 +1,6 @@
 # Setting up tailreach
 
-A step-by-step setup that a person, or a Claude agent working for them, can follow on **their own** Mac and Tailscale account. Each step says what to run, how to check it worked, and which parts only the human can do.
+A step-by-step setup that a person, or a coding agent working for them, can follow on **their own** Mac and Tailscale account. Each step says what to run, how to check it worked, and which parts only the human can do.
 
 > The binary and its folders are still named `mydevices`. Renaming them would make macOS
 > forget the permissions already granted on existing installs, so the name stays.
@@ -11,6 +11,25 @@ A step-by-step setup that a person, or a Claude agent working for them, can foll
 - `https://devices.<your-tailnet>.ts.net/mac/`: this Mac's screen, controllable from an iPhone, iPad or another computer.
 - A login item, so it starts on its own after every login.
 
+## Quick path
+
+```sh
+git clone https://github.com/TanmayDoesAI/tailreach.git && cd tailreach
+make setup          # signing identity, build, login item, then a check of everything
+```
+
+`make setup` does every step that doesn't need you, and is safe to run again. It ends with
+`./mydevices doctor`, which lists what's left with the exact fix for each:
+
+- approving the Tailscale sign-in (it opens the link);
+- choosing a device password;
+- switching on two permissions.
+
+Run `./mydevices doctor` again after each fix, until it says **All good** or **Working**. It
+exits with status 1 while something still needs fixing.
+
+The numbered steps below are the same thing done by hand, with the reasoning.
+
 ## Rules for agents
 
 - **Never type, choose or store a password.** The device password is set by the human with
@@ -19,6 +38,7 @@ A step-by-step setup that a person, or a Claude agent working for them, can foll
 - **Never complete the Tailscale sign-in for them.** Open the link and let them approve it.
 - Don't publish the human's tailnet name (`tailXXXXXX.ts.net`), Tailscale IPs, device names or e-mail anywhere: in commits, issues or docs.
 - If a check fails twice, stop and report what you saw instead of improvising.
+- `./mydevices doctor` is the source of truth for what's done. Run it first, and after every step.
 
 ## 0. Requirements
 
@@ -57,8 +77,9 @@ make local
 
 Check: `./mydevices version` prints a version, and `ls mydevices-capture` exists.
 
-> Go builds with `CGO_ENABLED=0` (set in the Makefile). If `go` is an x86_64 toolchain on Apple
-> silicon, keep it that way; it cross-compiles fine.
+> Go builds with `CGO_ENABLED=0` (set in the Makefile). On Apple silicon, use the Apple silicon
+> Go (`go env GOARCH` says `arm64`). An Intel Go builds an Intel binary, which works but runs
+> through Rosetta and costs more CPU while streaming; `./mydevices doctor` warns about it.
 
 ## 4. Turn on Screen Sharing (needed for unlocking the lock screen)
 
@@ -105,6 +126,8 @@ Open the Mac's page once from the phone (step 9) so macOS registers the app, the
 - **System Settings → Privacy & Security → Screen Recording**: enable `mydevices`.
 - **System Settings → Privacy & Security → Accessibility**: enable `mydevices`. In newer macOS this list may be called *Device Control and Data Access*. If it isn't listed, press **+** and add the `mydevices` binary from the repo folder.
 
+If `mydevices` isn't in a list, `./mydevices doctor --ask` puts it there (macOS may show a prompt). Then switch it on.
+
 Then restart the service: `make reload`.
 
 If you're unsure about an entry, remove it with **−**, add it back with **+**, and run `make reload`.
@@ -117,6 +140,12 @@ If you're unsure about an entry, remove it with **−**, add it back with **+**,
 4. Tap **mac**. Share → **Add to Home Screen** for an app icon.
 
 ## 10. Verify (agent can do this)
+
+```sh
+./mydevices doctor
+```
+
+Every line should be ✓. Then check a real stream end to end:
 
 ```sh
 go run ./tools/streamtest -rtc -t 6 https://devices.<tailnet>.ts.net/mac/
@@ -141,7 +170,7 @@ On another Mac, do steps 1–4 and 8, then:
 ./mydevices install --name mac2    # reachable only through the hub, at /mac2/
 ```
 
-Multi-computer setups are less hardened than a single hub; see "Known gaps" in `CLAUDE.md`.
+Multi-computer setups are less hardened than a single hub; see "Known gaps" in `AGENTS.md`.
 
 ## Uninstall
 
