@@ -166,7 +166,14 @@ func (a *app) authRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /auth/register/finish", a.registerFinish)
 	mux.HandleFunc("POST /auth/login/begin", a.loginBegin)
 	mux.HandleFunc("POST /auth/login/finish", a.loginFinish)
+	// Signing out ends the session and forgets this device: the password is asked again.
 	mux.HandleFunc("POST /auth/logout", func(w http.ResponseWriter, r *http.Request) {
+		if !a.sameOrigin(r) {
+			http.Error(w, "bad origin", http.StatusForbidden)
+			return
+		}
+		a.sec.dropTrust(w, r)
+		a.audit("signed-out", a.viewerName(r), "")
 		if c, err := r.Cookie(sessionCookie); err == nil {
 			a.auth2.mu.Lock()
 			delete(a.auth2.sessions, tokenHash(c.Value))

@@ -54,6 +54,7 @@
     .empty { padding: 18px 16px; color: var(--text-2); font-size: 15px; }
 
     .hint { margin: 10px 16px 0; font-size: 13px; line-height: 1.45; color: var(--text-2); }
+    .signout { display: block; margin: 28px auto 0; border: 0; background: none; color: var(--accent); font: inherit; font-size: 15px; cursor: pointer; }
     code { white-space: nowrap; font: 12.5px ui-monospace, "SF Mono", Menlo, monospace; color: var(--text); }
   </style>
 </head>
@@ -65,6 +66,7 @@
   <div class="list" id="list"><div class="empty">Looking for devices…</div></div>
   <p class="hint">To add a computer, turn on Screen Sharing on it and run
     <code>mydevices --name <i>name</i></code> signed in to the same Tailscale account.</p>
+  <button class="signout" id="signOut">Sign out of this device</button>
 </main>
 
 <script>
@@ -110,6 +112,11 @@
   }
   refresh();
   setInterval(refresh, 5000);
+  // Ends the session and forgets this device, so the password is asked next time.
+  document.getElementById('signOut').onclick = async () => {
+    try { await fetch('/auth/logout', { method: 'POST' }); } catch {}
+    location.replace('/login');
+  };
 </script>
 </body>
 </html>

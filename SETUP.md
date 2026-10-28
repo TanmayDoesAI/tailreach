@@ -136,7 +136,7 @@ If you're unsure about an entry, remove it with **−**, add it back with **+**,
 
 1. Phone: Tailscale app connected (turning on **On Demand** stops iOS from letting it sleep).
 2. Safari → `devices/` (or the full `https://devices.<tailnet>.ts.net/`).
-3. Enter the device password. Optionally create a passkey for Face ID next time.
+3. Enter the device password. Optionally create a passkey (Face ID, Touch ID, Windows Hello) for next time, or tap **Not now**.
 4. Tap **mac**. Share → **Add to Home Screen** for an app icon.
 
 ## 10. Verify (agent can do this)

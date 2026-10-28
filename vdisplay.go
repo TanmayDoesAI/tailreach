@@ -45,7 +45,7 @@ var ext struct {
 	done     chan struct{} // closed when the child has exited
 	id       uint32
 	w, h     uint32
-	hz       float64
+	hz       float64 // the rate it's streamed at (the display itself runs at 60 Hz)
 	viewers  int // streams open right now
 	idleT    *time.Timer
 	openedAt time.Time
@@ -116,7 +116,14 @@ func extendDisplay(w, h uint32, hz float64) (uint32, error) {
 
 	ext.mu.Lock()
 	defer ext.mu.Unlock()
-	if ext.cmd != nil && ext.w == w && ext.h == h && ext.hz == hz {
+	// The display itself always runs at 60 Hz; hz is the frame rate it is streamed at. So a
+	// new rate only restarts the capture (the viewer does that), and the display, with the
+	// windows on it, stays where it is.
+	if ext.cmd != nil && ext.w == w && ext.h == h {
+		if ext.hz != hz {
+			log.Printf("extended display %d: streaming at %.0f fps", ext.id, hz)
+		}
+		ext.hz = hz
 		return ext.id, nil
 	}
 	if ext.cmd != nil && time.Since(ext.openedAt) < 2*time.Second {
@@ -138,8 +145,7 @@ func startChildLocked(w, h uint32, hz float64) (uint32, error) {
 	if err != nil {
 		return 0, err
 	}
-	cmd := exec.Command(exe, "vdisplay",
-		"-w", strconv.Itoa(int(w)), "-h", strconv.Itoa(int(h)), "-hz", strconv.Itoa(int(hz)))
+	cmd := exec.Command(exe, "vdisplay", "-w", strconv.Itoa(int(w)), "-h", strconv.Itoa(int(h)), "-hz", "60")
 	cmd.Stderr = os.Stderr
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -197,7 +203,7 @@ func startChildLocked(w, h uint32, hz float64) (uint32, error) {
 
 	ext.cmd, ext.stdin, ext.done = cmd, stdin, done
 	ext.id, ext.w, ext.h, ext.hz, ext.openedAt = r.ID, w, h, hz, time.Now()
-	log.Printf("extended display %d opened: %dx%d @ %.0f Hz", r.ID, w, h, hz)
+	log.Printf("extended display %d opened: %dx%d, streamed at %.0f fps", r.ID, w, h, hz)
 	go func() { // the display vanishing on its own (the child died): forget it
 		<-done
 		ext.mu.Lock()
@@ -243,7 +249,7 @@ func closeExtendedLocked() error {
 	return nil
 }
 
-// extendedInfo is the open extended display's ID and refresh rate.
+// extendedInfo is the open extended display's ID and the frame rate it's streamed at.
 func extendedInfo() (id uint32, hz float64, ok bool) {
 	ext.mu.Lock()
 	defer ext.mu.Unlock()

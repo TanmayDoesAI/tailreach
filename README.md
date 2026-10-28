@@ -76,8 +76,9 @@ In both modes:
 
 **Toolbar.**
 - The ⌘ ⌥ ⌃ ⇧ buttons are sticky: they apply to the next key or click. A hardware keyboard or trackpad on an iPad works directly.
-- Drag the ⠿ grip to dock the toolbar on any edge. On the left or right it sits in the black margin beside a landscape picture.
-- The toolbar never covers the Mac's screen. To use every pixel, tap the status pill at the top (ping · fps) to hide it, and tap the pill again to bring it back.
+- The toolbar floats over the screen. Drag its ⠿ grip to put it anywhere (it stays there next time), and tap the grip to fold it down to a small button, or open it again.
+- To hide the toolbar completely, tap the status pill at the top (ping · fps); tap the pill again to bring it back.
+- The full-screen button (desktop browsers, Android, iPad) sits next to **⋯**.
 - **More than one display:** pick which one to show in the **⋯** panel. It switches live, and taps, the pointer and the cursor follow it.
 
 ## Extended display (Mac)
@@ -85,7 +86,7 @@ In both modes:
 Use a laptop's, tablet's or phone's browser as a second monitor for the Mac. Open the viewer on that device, tap the extended-display button in the toolbar and start it. The Mac gets a virtual display the size of that screen: drag windows onto it, and the mouse crosses over like a real monitor.
 
 - **Always an extra screen:** the Mac's own display stays the main one. Nothing moves the menu bar, the Dock or your arrangement.
-- **Refresh rate:** 30 Hz by default (plenty for documents, and light on the Mac); 60 Hz is a choice in the same panel.
+- **Refresh rate:** 30 Hz by default (plenty for documents, and light on the Mac); 60 Hz is a choice in the same panel. Switching while it's on keeps the display and its windows where they are.
 - **Closing it:** **Exit** in the viewer closes it right away. If the connection just drops, it stays for 5 minutes so a reconnect finds your windows where you left them.
 - **One device at a time.** A second device is asked whether to take over. The first is told it was taken over and doesn't fight back. Taking over can also close the extended display.
 - **Caveats:**
@@ -126,8 +127,9 @@ Every request has to pass all of these layers:
    - Trust is tied to that device's Tailscale identity, so a copied cookie doesn't work anywhere else.
    - Five wrong tries lock it for 15 minutes and notify the Mac.
    - Set or reset it in the settings window (`./mydevices settings`) or from a terminal (`./mydevices password`; add `--off` to turn it off).
-4. **Sign-in.** Use the device password, or a passkey (Face ID / Touch ID) as a shortcut.
-   - The device password alone signs you in, so a passkey problem never locks you out.
+4. **Sign-in.** Use the device password, or a passkey (Face ID, Touch ID, Windows Hello) as a shortcut.
+   - The device password alone signs you in, so a passkey problem never locks you out. Each device is offered its own passkey once, and **Not now** skips it.
+   - **Sign out of this device** (in **⋯**, or on the device list) ends the session and forgets the device, so the password is asked again.
    - With no device password set, adding a passkey needs a 6-digit code shown on the Mac.
    - Sessions are HttpOnly, Secure, SameSite=Strict cookies. They expire after 12 h, or after 1 h idle.
 5. **Hub pinning.** Devices behind a hub only accept connections from that one hub. The hub's node ID is pinned the first time it connects.

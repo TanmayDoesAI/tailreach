@@ -96,29 +96,16 @@ body[data-state="off"] .loader { display: none; }
 .capsule button.active { background: var(--text); color: #000; }
 .sep { width: 0.5px; height: 20px; background: var(--hairline); margin: 0 4px; flex: none; }
 
-#bar { bottom: calc(12px + var(--safe-b) + var(--kb-offset)); }
-#keys { bottom: calc(64px + var(--safe-b) + var(--kb-offset)); display: none; }
-body:not([data-dock="bottom"]) #keys { bottom: calc(12px + var(--safe-b) + var(--kb-offset)); }
-
-/* The toolbar docks to any edge: drag its grip. On the sides it's two columns, which fit in
-   the black margin beside a landscape picture. */
+/* The toolbar floats over the screen wherever its grip leaves it (placed by placeBar());
+   a tap on the grip folds it down to just the grip. */
+#bar { left: 0; top: 0; transform: none; bottom: auto; }
+#keys { bottom: calc(12px + var(--safe-b) + var(--kb-offset)); display: none; }
 #grip { flex: none; display: flex; align-items: center; justify-content: center; width: 24px; height: 40px; color: var(--text-2); touch-action: none; cursor: grab; }
 #grip svg { width: 16px; height: 16px; }
 body.dragging-bar #grip { color: var(--text); cursor: grabbing; }
-body[data-dock="top"] #bar { bottom: auto; top: calc(44px + var(--safe-t)); }
-body[data-dock="left"] #bar, body[data-dock="right"] #bar {
-  /* centred between the Exit button and the bottom edge, scrolling if it still doesn't fit */
-  top: calc(54px + var(--safe-t)); bottom: calc(12px + var(--safe-b) + var(--kb-offset));
-  height: fit-content; margin: auto 0; transform: none;
-  max-height: calc(100% - 66px - var(--safe-t) - var(--safe-b) - var(--kb-offset));
-  display: grid; grid-template-columns: repeat(2, 40px); justify-items: center;
-  border-radius: 24px; max-width: none; overflow-x: hidden; overflow-y: auto;
-}
-body[data-dock="left"] #bar { left: calc(8px + env(safe-area-inset-left, 0px)); }
-body[data-dock="right"] #bar { left: auto; right: calc(8px + env(safe-area-inset-right, 0px)); }
-body[data-dock="left"] #bar .sep, body[data-dock="right"] #bar .sep { display: none; }
-body[data-dock="left"] #grip, body[data-dock="right"] #grip { grid-column: span 2; width: 100%; height: 24px; }
-body[data-dock="left"] #bar button, body[data-dock="right"] #bar button { padding: 0; width: 40px; }
+body.dragging-bar #bar { box-shadow: 0 12px 40px rgba(0,0,0,.5); }
+body.bar-mini #bar > :not(#grip) { display: none; }
+body.bar-mini #grip { width: 40px; }
 body.kbd-open #keys { display: flex; }
 body:not([data-state="on"]) #bar, body:not([data-state="on"]) #keys,
 body.locked #bar, body.locked #keys,

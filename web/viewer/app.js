@@ -29,9 +29,10 @@ const settings = {
   mode: store.get('mode', 'trackpad'),   // 'trackpad' | 'touch'
   display: store.get('display', 0),      // the Mac's display to show; 0 = its main one
   extHz: store.get('extHz', 30),         // refresh rate asked of the extended display: 30 is plenty and costs the Mac less
-  dock: store.get('dock', 'bottom'),     // the toolbar's edge: 'bottom' | 'top' | 'left' | 'right'
+  barAt: store.get('barAt', null),       // where the toolbar floats: its centre as fractions of the screen; null = bottom centre
+  barMini: store.get('barMini', false),  // folded down to just its grip
 };
-document.body.dataset.dock = settings.dock;
+document.body.classList.toggle('bar-mini', settings.barMini);
 
 const canvas = $('#screen');
 const ctx2d = canvas.getContext('2d', { alpha: false, desynchronized: true });
@@ -467,6 +468,8 @@ function onEvent(ev) {
       // The Mac announces the new display a moment later: switch to it when it shows up in
       // the list (or after 2 s regardless). 0 means it was removed.
       if (!ev.id) { chooseDisplay(0); if (ev.note) flash(ev.note); break; }
+      // Same display, new frame rate: restart the stream only, and leave the panel open.
+      if (ev.id === shownDisplay) { markExtend(); sendStart(); break; }
       pendingExt = ev.id;
       setTimeout(() => finishExtend(ev.id), 2000);
       finishExtend(ev.id, true);
@@ -743,7 +746,7 @@ function placeSpaceArrows(shownWidth) {
   const roomy = gutter >= 52;
   document.body.classList.toggle('roomy', roomy);
   const left = roomy ? Math.max(4, gutter / 2 - 22) : 6;
-  // Measured from the picture's area, so a toolbar docked at the side keeps them clear of it.
+  // Measured from the picture's area (the keyboard row can shrink it).
   const fromLeft = viewArea.x, fromRight = innerWidth - viewArea.x - viewArea.width;
   $('#spacePrev').style.left = `calc(${fromLeft + left}px + env(safe-area-inset-left, 0px) * ${roomy || fromLeft ? 0 : 1})`;
   $('#spaceNext').style.right = `calc(${fromRight + left}px + env(safe-area-inset-right, 0px) * ${roomy || fromRight ? 0 : 1})`;
@@ -1089,9 +1092,8 @@ function toggleKeyboard() {
   document.activeElement === kbd ? kbd.blur() : kbd.focus();
 }
 
-// Fit the screen and its input coordinates into the visible area above the keyboard and
-// toolbar, so the controls never sit on top of the Mac (a call's mute button, the Dock).
-// Hiding the controls (tap the status pill) gives the whole screen back.
+// Fit the screen and its input coordinates into the visible area above the keyboard.
+// The toolbar floats on top: drag it anywhere, or fold it down to its grip.
 // Both WebRTC video and the canvas fallback use the same transform.
 function fitViewport() {
   const vv = window.visualViewport;
@@ -1099,21 +1101,30 @@ function fitViewport() {
   const width = vv?.width || innerWidth, height = vv?.height || innerHeight;
   document.documentElement.style.setProperty('--kb-offset', `${Math.max(0, innerHeight - height - y)}px`);
   let left = x, top = y, right = x + width, bottom = y + height;
-  for (const [el, edge] of [[$('#bar'), settings.dock], [$('#keys'), 'bottom']]) {
-    const r = el.getBoundingClientRect();
-    if (!r.height) continue;
-    if (edge === 'bottom') bottom = Math.min(bottom, r.top - 6);
-    if (edge === 'top') top = Math.max(top, r.bottom + 6);
-    if (edge === 'left') left = Math.max(left, r.right + 6);
-    if (edge === 'right') right = Math.min(right, r.left - 6);
-  }
+  const keys = $('#keys').getBoundingClientRect();
+  if (keys.height) bottom = Math.min(bottom, keys.top - 6);
   Object.assign(viewArea, { x: left, y: top, width: Math.max(1, right - left), height: Math.max(1, bottom - top) });
+  placeBar();
   layout();
   followCursor();
 }
+
+// Put the toolbar where it was left, kept whole on screen and above the keyboard row.
+function placeBar() {
+  const bar = $('#bar'), r = bar.getBoundingClientRect();
+  if (!r.width) return;
+  const vv = window.visualViewport;
+  const minX = (vv?.offsetLeft || 0) + 8, maxX = minX - 16 + (vv?.width || innerWidth) - r.width;
+  const minY = (vv?.offsetTop || 0) + 8, maxY = viewArea.y + viewArea.height - 6 - r.height;
+  const at = settings.barAt || { x: 0.5, y: 1 };
+  const x = Math.min(Math.max(minX, at.x * innerWidth - r.width / 2), Math.max(minX, maxX));
+  const y = Math.min(Math.max(minY, at.y * innerHeight - r.height / 2), Math.max(minY, maxY));
+  bar.style.left = `${x}px`;
+  bar.style.top = `${y}px`;
+}
 window.visualViewport?.addEventListener('resize', fitViewport);
 window.visualViewport?.addEventListener('scroll', fitViewport);
-// The bar shows and hides with the connection, lock and pill: re-fit whenever it does.
+// The bar and the keys row show and hide with the connection, lock and pill: re-fit whenever they do.
 if (window.ResizeObserver) {
   const ro = new ResizeObserver(() => fitViewport());
   ro.observe($('#bar'));
@@ -1255,22 +1266,30 @@ document.addEventListener('fullscreenchange', markFullscreen);
 document.addEventListener('webkitfullscreenchange', markFullscreen);
 
 // ---------- toolbar & panel ----------
+// Done with this screen: stop the stream (and the extended display) before going.
+function endViewing() {
+  stopped = true;
+  clearTimeout(rtcRetry);
+  clearTimeout(g.longTimer);
+  g.active = false;
+  stopMomentum();
+  kbd.blur();
+  // Exit means done: remove the extended display now. A drop or closed tab instead
+  // leaves it for the server's idle timeout, so a reconnect finds the windows in place.
+  if (extActive()) send({ t: 'unextend' });
+  ws?.close(1000, 'Viewer exited');
+  stopRTC(false);
+  resetDecoder();
+  wakeLock?.release().catch(() => {});
+}
+
 const actions = {
-  exit: () => {
-    stopped = true;
-    clearTimeout(rtcRetry);
-    clearTimeout(g.longTimer);
-    g.active = false;
-    stopMomentum();
-    kbd.blur();
-    // Exit means done: remove the extended display now. A drop or closed tab instead
-    // leaves it for the server's idle timeout, so a reconnect finds the windows in place.
-    if (extActive()) send({ t: 'unextend' });
-    ws?.close(1000, 'Viewer exited');
-    stopRTC(false);
-    resetDecoder();
-    wakeLock?.release().catch(() => {});
-    location.assign(new URL('../', location.href).href);
+  exit: () => { endViewing(); location.assign(new URL('../', location.href).href); },
+  // Ends the session and forgets this device, so the password is asked next time.
+  signOut: async () => {
+    endViewing();
+    try { await fetch('/auth/logout', { method: 'POST' }); } catch {}
+    location.assign('/login');
   },
   keyboard: toggleKeyboard,
   fullscreen: toggleFullscreen,
@@ -1324,7 +1343,7 @@ function extSpec() {
 function markExtend() {
   const on = extActive(), s = extSpec();
   $('#extSpec').textContent = `${s.w} × ${s.h} · ${s.hz} Hz`;
-  $('#extState').textContent = extBusy ? 'Starting…' : on ? 'On' : 'Off';
+  $('#extState').textContent = extBusy ? (on ? 'Changing…' : 'Starting…') : on ? 'On' : 'Off';
   $('#extend').classList.toggle('on', on);
   $('#extendBtn').classList.toggle('live', on);
   $('#extGo').textContent = on ? 'Stop extended display' : 'Start extended display';
@@ -1374,7 +1393,7 @@ document.addEventListener('click', (e) => {
   if (!b || +b.dataset.extfps === extSpec().hz) return;
   settings.extHz = +b.dataset.extfps;
   store.set('extHz', settings.extHz);
-  if (extActive()) sendExtend();   // a new refresh rate means a new display
+  if (extActive()) sendExtend();   // the same display, streamed at the new rate
   else markExtend();
 });
 
@@ -1417,28 +1436,38 @@ document.querySelectorAll('#bar button, #keys button').forEach((b) => b.addEvent
 document.querySelectorAll('#bar button, #keys button').forEach((b) => b.addEventListener('touchstart', () => {}, { passive: true }));
 $('#status').addEventListener('click', () => document.body.classList.toggle('bar-hidden'));   // the bar's observer re-fits
 
-// Drag the grip to dock the toolbar on another edge: it snaps to whichever edge the finger
-// is nearest, live, and stays there next time.
+// The grip moves the toolbar anywhere on the screen (it stays there next time), and a tap
+// on it folds the toolbar down to just the grip, or opens it again.
 const grip = $('#grip');
+let gripFrom = null;   // where the drag started: the pointer, and the bar's centre
 grip.addEventListener('pointerdown', (e) => {
   e.preventDefault();
   grip.setPointerCapture(e.pointerId);
-  document.body.classList.add('dragging-bar');
+  const r = $('#bar').getBoundingClientRect();
+  gripFrom = { px: e.clientX, py: e.clientY, cx: r.left + r.width / 2, cy: r.top + r.height / 2, moved: false };
 });
 grip.addEventListener('pointermove', (e) => {
-  if (!grip.hasPointerCapture(e.pointerId)) return;
-  const fx = e.clientX / innerWidth, fy = e.clientY / innerHeight;
-  const near = { left: fx, right: 1 - fx, top: fy, bottom: 1 - fy };
-  const edge = Object.keys(near).reduce((a, b) => (near[b] < near[a] ? b : a));
-  if (edge === settings.dock) return;
-  settings.dock = document.body.dataset.dock = edge;
-  fitViewport();
+  if (!gripFrom || !grip.hasPointerCapture(e.pointerId)) return;
+  const dx = e.clientX - gripFrom.px, dy = e.clientY - gripFrom.py;
+  if (!gripFrom.moved && Math.hypot(dx, dy) < 6) return;
+  gripFrom.moved = true;
+  document.body.classList.add('dragging-bar');
+  settings.barAt = { x: (gripFrom.cx + dx) / innerWidth, y: (gripFrom.cy + dy) / innerHeight };
+  placeBar();
 });
-const dropBar = () => {
-  if (!document.body.classList.contains('dragging-bar')) return;
+const dropBar = (e) => {
+  if (!gripFrom) return;
+  const tap = !gripFrom.moved && e.type === 'pointerup';
+  gripFrom = null;
   document.body.classList.remove('dragging-bar');
-  store.set('dock', settings.dock);
-  fitViewport();
+  if (tap) {
+    settings.barMini = !settings.barMini;
+    document.body.classList.toggle('bar-mini', settings.barMini);
+    store.set('barMini', settings.barMini);
+  } else {
+    store.set('barAt', settings.barAt);
+  }
+  placeBar();
 };
 grip.addEventListener('pointerup', dropBar);
 grip.addEventListener('pointercancel', dropBar);

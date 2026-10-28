@@ -74,6 +74,7 @@
     <input id="code" class="hidden" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="Code">
     <button id="registerBtn" class="hidden">Create passkey</button>
     <button id="backBtn" class="quiet hidden">I already have a passkey</button>
+    <button id="pairSkipBtn" class="quiet hidden">Not now, use the password</button>
   </section>
 
   <!-- After the password: offer this device's own fingerprint, face or PIN -->
@@ -196,6 +197,8 @@
   $('#registerBtn').onclick = register;
   $('#offerBtn').onclick = register;
   $('#skipBtn').onclick = () => { mem.set('nopasskey'); location.replace(safeNext); };
+  // A passkey is never required when there's a password: skipping just asks for it.
+  $('#pairSkipBtn').onclick = () => { mem.set('nopasskey'); show('password'); $('#pw').focus(); };
 
   $('#password').onsubmit = async (e) => {
     e.preventDefault();
@@ -218,11 +221,21 @@
       $('#codeBtn').classList.add('hidden');
       $('#registerBtn').classList.remove('hidden');
     }
-    if (!window.PublicKeyCredential) { $('#err').textContent = 'This browser doesn’t support passkeys.'; return; }
-    // A passkey made on another device (say the phone) doesn't help here: offer one of its own.
-    const offer = st.registered && !st.codeNeeded && !mem.get('passkey') && !mem.get('nopasskey') && await canPasskeyHere();
-    show(st.registered && !offer ? 'signin' : 'pair');
-    if (offer) $('#backBtn').classList.remove('hidden');
+    if (!window.PublicKeyCredential) {
+      if (!st.codeNeeded) { show('password'); $('#pw').focus(); return; }
+      $('#err').textContent = 'This browser doesn’t support passkeys.'; return;
+    }
+    if (st.codeNeeded) return show(st.registered ? 'signin' : 'pair');   // no password: passkeys are the way in
+    // With a password, a passkey is optional. Offer this device its own (one made on the
+    // phone doesn't help here) unless it said no; otherwise sign in the usual way.
+    if (!mem.get('passkey') && !mem.get('nopasskey') && await canPasskeyHere()) {
+      show('pair');
+      $('#pairSkipBtn').classList.remove('hidden');
+      if (st.registered) $('#backBtn').classList.remove('hidden');
+      return;
+    }
+    if (st.registered) return show('signin');
+    show('password'); $('#pw').focus();
   }
   route();
 </script>

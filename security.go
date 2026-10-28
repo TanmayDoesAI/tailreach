@@ -163,6 +163,24 @@ func (s *security) addTrust(w http.ResponseWriter, node, device string) {
 	})
 }
 
+// dropTrust forgets this browser's 30-day trust, so it needs the password again.
+func (s *security) dropTrust(w http.ResponseWriter, r *http.Request) {
+	if c, err := r.Cookie(trustCookie); err == nil {
+		id := tokenHash(c.Value)
+		s.mu.Lock()
+		kept := s.trust[:0]
+		for _, t := range s.trust {
+			if t.ID != id {
+				kept = append(kept, t)
+			}
+		}
+		s.trust = kept
+		s.saveLocked()
+		s.mu.Unlock()
+	}
+	http.SetCookie(w, &http.Cookie{Name: trustCookie, Path: "/", MaxAge: -1, HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode})
+}
+
 // ---------- HTTP: entering the password ----------
 
 func (a *app) viewerNode(r *http.Request) string {
