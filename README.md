@@ -34,7 +34,7 @@ git clone https://github.com/TanmayDoesAI/tailreach.git && cd tailreach
 make setup
 ```
 
-`make setup` builds tailreach, signs it, and makes it start at login. It finishes with `./mydevices doctor`, which checks everything and tells you what's left, with the exact fix for each:
+There are no downloads: tailreach is built from source on your own Mac, and `make setup` handles the rest. It builds tailreach, signs it with a local identity (so macOS remembers its permissions), and makes it start at login. It finishes with `./mydevices doctor`, which checks everything and tells you what's left, with the exact fix for each:
 
 - approving the Tailscale sign-in;
 - choosing a device password;
