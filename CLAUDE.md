@@ -56,7 +56,7 @@ CGO_ENABLED=0 GOARCH=arm64 go vet .
 
 1. The hub proxy forwards the browser's cookies to devices and serves device HTML under the hub's origin. It should pin device node IDs, strip cookies and serve its own viewer bundle.
 2. A device's own password isn't enforced behind a hub. Either make the password hub-wide or forward and verify the viewer identity.
-3. There are no automated tests yet.
+3. Tests cover only the stream rate control (`ratectl_test.go`) and the bench proxy (`tools/streambench`); nothing tests auth or the hub yet.
 
 ## Repo hygiene (the repo must be safe to make public at any time)
 
