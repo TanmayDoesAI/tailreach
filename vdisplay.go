@@ -20,7 +20,9 @@ import (
 
 // Extended display: a virtual monitor the Mac treats like a real second screen, sized to
 // the viewing browser. It is only ever an EXTRA screen: the Mac's own display stays the
-// main one (nothing here moves the menu bar, the Dock or the display arrangement). The
+// main one (nothing here moves the menu bar or the Dock, or the Mac's own displays). The
+// one arrangement change is putting the extended display back where it was last left
+// (vdisplay_place_darwin.go). The
 // capture helper already lists every display and streams the one the viewer picks, so all
 // this adds is creating and removing the display.
 //
@@ -305,8 +307,24 @@ func vdisplayChild(args []string) int {
 	if err != nil {
 		return fail(err)
 	}
+	restorePlace(d.ID())
 	out.Encode(map[string]any{"id": d.ID()})
+	// Note where it is every few seconds (and last thing), so a move is kept even if
+	// mydevices is restarted while it's open.
+	stop := make(chan struct{})
+	go func() {
+		for t := time.NewTicker(5 * time.Second); ; {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				rememberPlace(d.ID())
+			}
+		}
+	}()
 	io.Copy(io.Discard, os.Stdin) // returns when the parent closes it, or exits
+	close(stop)
+	rememberPlace(d.ID())
 	d.Close()
 	return 0
 }

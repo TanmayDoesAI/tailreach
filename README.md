@@ -87,6 +87,7 @@ Use a laptop's, tablet's or phone's browser as a second monitor for the Mac. Ope
 
 - **Always an extra screen:** the Mac's own display stays the main one. Nothing moves the menu bar, the Dock or your arrangement.
 - **Refresh rate:** 30 Hz by default (plenty for documents, and light on the Mac); 60 Hz is a choice in the same panel. Switching while it's on keeps the display and its windows where they are.
+- **Where it sits:** drag it to any side in System Settings → Displays → Arrange, and it opens on that side every time after.
 - **Closing it:** **Exit** in the viewer closes it right away. If the connection just drops, it stays for 5 minutes so a reconnect finds your windows where you left them.
 - **One device at a time.** A second device is asked whether to take over. The first is told it was taken over and doesn't fight back. Taking over can also close the extended display.
 - **Caveats:**
