@@ -78,9 +78,6 @@ func runSim(l simLink, d time.Duration, seed int64) simResult {
 	return r
 }
 
-func at(d time.Duration) func(time.Duration) int64 {
-	return func(time.Duration) int64 { return int64(d) }
-}
 func flat(v int64) func(time.Duration) int64 { return func(time.Duration) int64 { return v } }
 
 func (r simResult) window(from, to time.Duration) (rates, queues []int64) {

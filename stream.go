@@ -326,7 +326,6 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 				"t": "stats", "br": bitrate.Load(), "kbps": sentBytes.Swap(0) * 8 / 1000, "drops": drops.Swap(0), "path": path,
 				"rtc": viaRTC() != nil,
 				"rec": recordingViewer(),
-				"est": func() int { if s := viaRTC(); s != nil { return s.targetBitrate() }; return 0 }(),
 				"ctl": ctlState.Load(),
 			})
 			if recordingViewer() {
@@ -434,7 +433,7 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 			if old := rtc.Swap(nil); old != nil {
 				old.close()
 			}
-			sess, answer, err := a.newRTC(sdp, int(maxBitrate.Load()),
+			sess, answer, err := a.newRTC(sdp,
 				func() { toHelper(map[string]any{"t": "kf"}) },
 				func() { // connected: switch video over with a fresh keyframe (SPS/PPS in front)
 					if cfg := lastConfig.Load(); cfg != nil {

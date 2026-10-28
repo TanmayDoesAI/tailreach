@@ -20,11 +20,11 @@ for r in ph:
           decms=round(d('totalDecodeTime')/dec*1000,1) if dec>0 else None, proc=round(d('totalProcessingDelay')/dec*1000) if dec>0 else None,
           lost=d('packetsLost'), nack=d('nackCount'), pli=d('pliCount'), kbps=round(d('bytesReceived')*8/1000),
           rtt=round(r.get('pairRtt',0)*1000), res=f"{r.get('frameWidth')}x{r.get('frameHeight')}",
-          br=m.get('br',0)//1000, est=m.get('est',0)//1000, act=m.get('act',0)//1000, bl=m.get('bl',0), mdrop=m.get('drops',0), vis=r.get('vis')))
+          br=m.get('br',0)//1000, act=m.get('act',0)//1000, bl=m.get('bl',0), mdrop=m.get('drops',0), vis=r.get('vis')))
     prev=r
-print(' time     shown dec drop frz frzms  jb  dec_ms proc lost nack pli  kbps rtt   br_k  est_k act_k  bl mdrop res')
+print(' time     shown dec drop frz frzms  jb  dec_ms proc lost nack pli  kbps rtt   br_k  act_k  bl mdrop res')
 for o in out:
-    print(f"{o['t']} {o['shown']:4} {o['dec']:4} {o['drop']:3} {o['frz']:3} {o['frzms']:5} {str(o['jb']):>4} {str(o['decms']):>6} {str(o['proc']):>4} {o['lost']:4} {o['nack']:4} {o['pli']:3} {o['kbps']:5} {o['rtt']:3} {o['br']:6} {o['est']:6} {o['act']:5} {o['bl']:3} {o['mdrop']:4} {o['res']} {o['vis'] if o['vis']!='visible' else ''}")
+    print(f"{o['t']} {o['shown']:4} {o['dec']:4} {o['drop']:3} {o['frz']:3} {o['frzms']:5} {str(o['jb']):>4} {str(o['decms']):>6} {str(o['proc']):>4} {o['lost']:4} {o['nack']:4} {o['pli']:3} {o['kbps']:5} {o['rtt']:3} {o['br']:6} {o['act']:5} {o['bl']:3} {o['mdrop']:4} {o['res']} {o['vis'] if o['vis']!='visible' else ''}")
 v=[o for o in out if o['vis']=='visible']
 q=lambda xs,p: sorted(xs)[int(p*(len(xs)-1))] if xs else None
 print('\nSUMMARY over',len(v),'s visible')

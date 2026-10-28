@@ -12,8 +12,6 @@ import (
 
 	"github.com/pion/ice/v4"
 	"github.com/pion/interceptor"
-	"github.com/pion/interceptor/pkg/cc"
-	"github.com/pion/interceptor/pkg/gcc"
 	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
 	"github.com/pion/rtp/codecs"
@@ -63,7 +61,6 @@ type rtcSession struct {
 	pc        *webrtc.PeerConnection
 	track     *webrtc.TrackLocalStaticRTP
 	connected atomic.Bool
-	est       atomic.Value // cc.BandwidthEstimator
 	sentBytes atomic.Int64
 	sentTotal atomic.Int64 // never reset: the rate controller reads its own deltas
 	move      atomic.Pointer[webrtc.DataChannel]
@@ -93,7 +90,7 @@ const keyframeEvery = 300 * time.Millisecond
 
 // newRTC answers the browser's offer. onKeyframe is called when the browser asks for one;
 // onInput for each command arriving on a data channel, with a way to answer on it.
-func (a *app) newRTC(offer string, maxBitrate int, onKeyframe, onConnected, onFailed func(),
+func (a *app) newRTC(offer string, onKeyframe, onConnected, onFailed func(),
 	onInput func(msg []byte, reply func([]byte))) (*rtcSession, string, error) {
 	mux, err := a.iceMux()
 	if err != nil {
@@ -101,7 +98,7 @@ func (a *app) newRTC(offer string, maxBitrate int, onKeyframe, onConnected, onFa
 	}
 
 	m := &webrtc.MediaEngine{}
-	feedback := []webrtc.RTCPFeedback{{Type: "nack"}, {Type: "nack", Parameter: "pli"}, {Type: "ccm", Parameter: "fir"}, {Type: "transport-cc"}}
+	feedback := []webrtc.RTCPFeedback{{Type: "nack"}, {Type: "nack", Parameter: "pli"}, {Type: "ccm", Parameter: "fir"}}
 	for pt, profile := range map[webrtc.PayloadType]string{102: "640c1f", 106: "42e01f"} {
 		if err := m.RegisterCodec(webrtc.RTPCodecParameters{
 			RTPCodecCapability: webrtc.RTPCodecCapability{
@@ -115,27 +112,16 @@ func (a *app) newRTC(offer string, maxBitrate int, onKeyframe, onConnected, onFa
 	}
 
 	s := &rtcSession{done: make(chan struct{})}
+	// Only what the stream uses: NACK retransmits (trimmed by nackLimiter) and RTCP reports,
+	// whose loss figure feeds the rate controller. No congestion-control interceptor (GCC,
+	// transport-cc): rateCtl reads the queue directly, and those would cost work per packet.
+	// No pacer either: each frame goes out the moment it's encoded.
 	reg := &interceptor.Registry{}
-	ccf, err := cc.NewInterceptor(func() (cc.BandwidthEstimator, error) {
-		return gcc.NewSendSideBWE(
-			gcc.SendSideBWEInitialBitrate(6_000_000),
-			gcc.SendSideBWEMinBitrate(minBitrate),
-			gcc.SendSideBWEMaxBitrate(maxBitrate),
-			// No pacer queue: each frame goes out the moment it's encoded. A pacer queue can
-			// grow without limit when the estimate drops, adding hidden delay; the encoder's
-			// own rate control (steered from the estimate) keeps us within the path instead.
-			gcc.SendSideBWEPacer(gcc.NewNoOpPacer()))
-	})
-	if err != nil {
-		return nil, "", err
-	}
-	ccf.OnNewPeerConnection(func(_ string, e cc.BandwidthEstimator) { s.est.Store(e) })
-	reg.Add(ccf)
-	if err := webrtc.ConfigureTWCCHeaderExtensionSender(m, reg); err != nil {
-		return nil, "", err
-	}
 	reg.Add(nackLimiterFactory{rateBps: &s.rateBps}) // ahead of the NACK responder: trims its work
-	if err := webrtc.RegisterDefaultInterceptors(m, reg); err != nil { // NACK retransmits, RTCP reports
+	if err := webrtc.ConfigureNack(m, reg); err != nil {
+		return nil, "", err
+	}
+	if err := webrtc.ConfigureRTCPReports(reg); err != nil {
 		return nil, "", err
 	}
 
@@ -242,14 +228,6 @@ func (a *app) newRTC(offer string, maxBitrate int, onKeyframe, onConnected, onFa
 	case <-time.After(3 * time.Second):
 	}
 	return s, pc.LocalDescription().SDP, nil
-}
-
-// targetBitrate is what congestion control thinks the path can carry right now.
-func (s *rtcSession) targetBitrate() int {
-	if e, ok := s.est.Load().(cc.BandwidthEstimator); ok {
-		return e.GetTargetBitrate()
-	}
-	return 0
 }
 
 // setConfig takes the helper's decoder config message ([1][u16 len][json][avcC]) and keeps SPS/PPS.

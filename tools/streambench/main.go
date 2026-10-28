@@ -641,8 +641,6 @@ func (b *bench) onWSFrame(ptsUs uint64, key bool, n int, now time.Time) {
 	}
 }
 
-func med(v []float64) float64 { return pct(v, 0.5) }
-
 // finish computes the final report.
 func (b *bench) finish() report {
 	b.mu.Lock()

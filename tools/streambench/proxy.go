@@ -107,11 +107,6 @@ func (p *udpProxy) forward(imp *pathImpair, s *scheduler, data []byte, send func
 	}
 }
 
-func (p *udpProxy) close() {
-	p.bench.Close()
-	p.dev.Close()
-}
-
 // stats reports how many datagrams crossed each direction.
 func (p *udpProxy) stats() (up, down int64) { return p.upPkts.Load(), p.downPkts.Load() }
 

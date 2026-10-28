@@ -35,8 +35,6 @@ type latTracker struct {
 	base float64   // ms subtracted (median in rtc mode: the startup burst would fake a floor)
 }
 
-func (l *latTracker) add(v float64) { l.raw = append(l.raw, v) }
-
 // normalizeRTC centers the series on its median: the RTP timestamp base is unknown,
 // and at cold start the capture pipeline flushes a backlog burst whose raw latencies
 // would otherwise look like a huge negative floor.
