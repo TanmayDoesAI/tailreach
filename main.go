@@ -69,6 +69,9 @@ func main() {
 		case "settings":
 			exitOn(openSettings(os.Args[2:]))
 			return
+		case "doctor":
+			exitOn(doctor(os.Args[2:]))
+			return
 		case "version":
 			if debugLog {
 				fmt.Println(version, "(debug build)")
@@ -185,7 +188,8 @@ func run(o options) error {
 		a.web, _ = fs.Sub(embedded, "web")
 	}
 
-	if len(st.CertDomains) == 0 {
+	a.https = len(st.CertDomains) > 0
+	if !a.https {
 		log.Printf("⚠ HTTPS certificates are off for this tailnet. Turn on MagicDNS and HTTPS at")
 		log.Printf("  https://login.tailscale.com/admin/dns — the remote screen needs https to log in.")
 	}
@@ -253,6 +257,7 @@ Usage:
   mydevices uninstall            stop and remove the login item
   mydevices settings             open the settings window on this Mac (password, trusted devices, sessions)
   mydevices password             set or reset the device password from a terminal (--off turns it off)
+  mydevices doctor               check the setup and say how to fix what isn't right
 
 Flags:
 `, version)

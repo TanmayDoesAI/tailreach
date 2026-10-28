@@ -383,6 +383,19 @@ func (a *app) control(req map[string]any) map[string]any {
 		path := a.startViewerRec(int(secs))
 		a.audit("viewer-stats", "this Mac", fmt.Sprintf("%ds", int(secs)))
 		return map[string]any{"path": path, "secs": int(secs)}
+	case "diag": // for `mydevices doctor`: what macOS allows the capture helper
+		if !a.fastAvailable() {
+			return map[string]any{"error": "no capture helper next to mydevices"}
+		}
+		ask, _ := req["ask"].(bool)
+		res, busy, err := helperDiag(ask)
+		if err != nil {
+			return map[string]any{"error": err.Error()}
+		}
+		if busy {
+			return map[string]any{"busy": true}
+		}
+		return res
 	case "stopSessions":
 		stopAllSessions()
 		if a.auth2 != nil {
@@ -428,5 +441,10 @@ func (a *app) control(req map[string]any) map[string]any {
 	st["url"] = "https://" + a.selfDNS + "/"
 	st["owner"] = a.owner
 	st["managesLogin"] = a.auth2 != nil
+	st["https"] = a.https
+	st["screenSharing"] = a.vncUp()
+	st["name"] = a.opt.name
+	st["version"] = version
+	st["debug"] = debugLog
 	return st
 }

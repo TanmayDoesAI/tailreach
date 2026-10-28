@@ -399,6 +399,7 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 				reply(b)
 			}()
 		case allowedCmds[t] && t != "start":
+			delete(c, "ask") // diag's "ask" (permission prompts) is for `mydevices doctor` only
 			limit := 4096
 			if t == "clip-set" {
 				limit = 256 << 10

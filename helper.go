@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -74,6 +75,40 @@ func warmHelper() (*captureHelper, error) {
 	h.mu.Unlock()
 	helperState.h = h
 	return h, nil
+}
+
+// helperDiag asks the capture helper whether macOS lets it record the screen and control
+// input (for `mydevices doctor`). With ask, macOS also lists it in both Privacy panes and
+// may show its prompt. It never borrows the helper from a live stream: busy while viewed.
+func helperDiag(ask bool) (res map[string]any, busy bool, err error) {
+	h, err := warmHelper()
+	if err != nil {
+		return nil, false, err
+	}
+	h.mu.Lock()
+	viewed := h.sink != nil
+	h.mu.Unlock()
+	if viewed {
+		return nil, true, nil
+	}
+	got := make(chan map[string]any, 1)
+	detach := h.attach(func(typ byte, buf []byte) {
+		var m map[string]any
+		if typ == 3 && json.Unmarshal(buf[1:], &m) == nil && m["t"] == "diag" {
+			select {
+			case got <- m:
+			default:
+			}
+		}
+	})
+	defer detach()
+	h.send(map[string]any{"t": "diag", "ask": ask})
+	select {
+	case m := <-got:
+		return m, false, nil
+	case <-time.After(5 * time.Second):
+		return nil, false, errors.New("the capture helper didn't answer")
+	}
 }
 
 func (h *captureHelper) send(v any) {

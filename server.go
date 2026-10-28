@@ -35,6 +35,7 @@ type app struct {
 	selfDNS string // this node, e.g. mydevices.tail1234.ts.net
 	tsIP4   string // this node's tailnet IPv4 (WebRTC media only ever uses it)
 	owner   string // Tailscale login of whoever signed this device in
+	https   bool   // the tailnet issues HTTPS certificates (the viewer needs them)
 	allow   map[string]bool
 	auth2   *authState // passkeys (hub / standalone)
 	sec     *security  // device password + trusted devices

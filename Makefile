@@ -8,7 +8,7 @@ DEBUG ?= 0
 GOTAGS := $(if $(filter 1,$(DEBUG)),-tags debug)
 SWIFTDEBUG := $(if $(filter 1,$(DEBUG)),-D DEBUG_LOG)
 
-.PHONY: all local capture reload run clean
+.PHONY: all local capture reload run clean setup doctor
 
 all: $(TARGETS:%=dist/mydevices-%)
 
@@ -28,6 +28,25 @@ local: capture
 capture:
 	swiftc -O -swift-version 5 $(SWIFTDEBUG) capture/*.swift -o mydevices-capture
 	codesign --force -s "$(SIGN)" --identifier com.mydevices.capture mydevices-capture
+
+# Set up this Mac: everything that doesn't need you, in order, and safe to run again.
+# Signing identity, build, login item (the first time; an existing one keeps its flags and is
+# just restarted), then `mydevices doctor`, which lists what's left for you to do.
+# Another computer behind the first one's dashboard: make setup FLAGS="--name mac2"
+NAME ?= mac
+FLAGS ?= --hub --name $(NAME)
+setup:
+	@command -v swiftc >/dev/null || { echo "Needs the Xcode Command Line Tools: xcode-select --install"; exit 1; }
+	@command -v go >/dev/null || { echo "Needs Go: https://go.dev/dl (on Apple silicon, the darwin-arm64 one)"; exit 1; }
+	@sh scripts/signing-identity.sh
+	@$(MAKE) --no-print-directory local
+	@if [ -f "$$HOME/Library/LaunchAgents/com.mydevices.agent.plist" ]; then \
+		launchctl kickstart -k gui/$$(id -u)/com.mydevices.agent && echo "✓ login item restarted"; \
+	else ./mydevices install $(FLAGS); fi
+	@./mydevices doctor
+
+doctor:
+	@./mydevices doctor
 
 # Rebuild and restart the login item
 reload: local

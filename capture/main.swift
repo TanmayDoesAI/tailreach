@@ -525,7 +525,17 @@ func handle(_ c: [String: Any]) {
     case "kf": capture.requestKeyframe()
     case "resend": capture.resendConfig()
     case "displays": DispatchQueue.main.async { sendDisplays() }
-    case "diag": event(["t": "diag", "accessibility": AXIsProcessTrusted(), "screen": CGPreflightScreenCaptureAccess()])
+    case "diag":
+        // "ask" comes only from `mydevices doctor --ask` on this Mac (the server strips it from
+        // viewers): it puts mydevices in both Privacy lists, and macOS may show its prompt.
+        let ask = c["ask"] as? Bool ?? false
+        DispatchQueue.main.async {
+            if ask {
+                _ = CGRequestScreenCaptureAccess()
+                _ = AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
+            }
+            event(["t": "diag", "accessibility": AXIsProcessTrusted(), "screen": CGPreflightScreenCaptureAccess()])
+        }
     case "br": capture.setBitrate(Int(num(c["bps"])))
     case "abs": inputQ.async { input.moveAbs(num(c["x"]), num(c["y"]), mods: mods) }
     case "rel": inputQ.async { input.moveRel(num(c["dx"]), num(c["dy"]), mods: mods) }
