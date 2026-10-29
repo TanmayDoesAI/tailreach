@@ -258,6 +258,7 @@ func trackSession(kind, viewer string, cancel context.CancelFunc, exclusive bool
 }
 
 func stopAllSessions() {
+	releaseVNC()
 	live.Lock()
 	defer live.Unlock()
 	for _, s := range live.m {

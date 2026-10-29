@@ -167,6 +167,7 @@ Tip: in the Tailscale admin console's access controls, you can also limit which 
 ## Lock screen, sleep and restarts
 
 - **Locked Mac:** your phone shows "Mac is locked". Type the Mac password and it's entered on the real lock screen through the Mac's own Screen Sharing. The fast stream then resumes. Screen Sharing must be on.
+  - macOS locks the Mac again as soon as a Screen Sharing session that unlocked it ends. So that connection stays open, idle, while you're viewing, and closes a minute after you leave (or at once when Stop is pressed on the Mac). The Mac then locks itself again.
 - **Sleep:** turn on *Keep this Mac reachable while plugged in* in settings. The display still sleeps, but the Mac stays online.
 - **Restart:** with FileVault on, the Mac waits at the disk-unlock screen before anything starts, so no remote tool can reach it. Someone has to type the password there once. After that, mydevices starts on its own if it's installed with `./mydevices install …`. For restarts you plan, `sudo fdesetup authrestart` skips that screen once.
 

@@ -575,7 +575,8 @@ async function unlockMac(password) {
   const holder = document.createElement('div');
   holder.style.cssText = 'position:fixed;left:-10px;top:-10px;width:1px;height:1px;overflow:hidden';
   document.body.append(holder);
-  const url = new URL('websockify', location.href);
+  // hold=1: the Mac keeps this connection while you view, or macOS would lock again.
+  const url = new URL('websockify?hold=1', location.href);
   url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
 
   await new Promise((resolve, reject) => {

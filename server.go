@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -263,7 +264,14 @@ func (a *app) relayVNC(w http.ResponseWriter, r *http.Request) {
 		ws.Close(websocket.StatusTryAgainLater, "screen sharing is off on this device")
 		return
 	}
-	defer tcp.Close()
+	// The viewer's unlock asks to keep the connection once it hangs up (vnchold.go).
+	hold := r.URL.Query().Get("hold") == "1"
+	var macEnded, kept atomic.Bool
+	defer func() {
+		if !kept.Load() {
+			tcp.Close()
+		}
+	}()
 
 	who := a.viewerName(r)
 	log.Printf("▶ VNC session started for %s", who)
@@ -274,13 +282,23 @@ func (a *app) relayVNC(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	defer trackSession("vnc", who, cancel, false)()
-	go func() { <-ctx.Done(); tcp.Close() }()
+	go func() {
+		<-ctx.Done()
+		if !kept.Load() {
+			tcp.Close()
+		}
+	}()
 	conn := websocket.NetConn(ctx, ws, websocket.MessageBinary)
 	go func() {
 		io.Copy(conn, tcp)
+		macEnded.Store(true) // the Mac hung up (a wrong password, for one): nothing to keep
 		cancel()
 	}()
 	io.Copy(tcp, conn)
+	if hold && !macEnded.Load() {
+		kept.Store(true)
+		holdVNC(tcp)
+	}
 	log.Printf("■ VNC session ended after %s", time.Since(start).Round(time.Second))
 	a.audit("vnc-end", who, time.Since(start).Round(time.Second).String())
 }

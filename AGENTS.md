@@ -27,6 +27,7 @@ Go server with embedded Tailscale (`tsnet`), a Swift capture/input helper, and a
 | `debug*.go` | `dlog` and the `debug` build tag (`make DEBUG=1`) |
 | `vrec.go` | measurement mode: the viewer's own receive stats, logged on the Mac (switched on from the control socket) |
 | `vdisplay*.go` | extended display: a virtual second monitor (private CGVirtualDisplay via `go-macos/virtualdisplay`), child process `mydevices vdisplay` owns it, idle auto-close; never the main display |
+| `vnchold.go` | keeps the phone's unlock connection to Screen Sharing open (idle) while anyone views, since macOS re-locks when it ends |
 | `helper.go` | one warm `mydevices-capture` process shared across reconnects |
 | `capture/*.swift` | ScreenCaptureKit + VideoToolbox H.264, CGEvent input, "Screen shared" panel, settings window |
 | `web/viewer/` | the viewer (`app.js`); `classic/` + `novnc/` is the VNC fallback for the lock screen |

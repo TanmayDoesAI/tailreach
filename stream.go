@@ -107,6 +107,8 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 	defer trackSession("stream", viewer, cancel, false)()
 	extViewerJoined()
 	defer extViewerLeft()
+	vncViewerJoined()
+	defer vncViewerLeft()
 	go func() { <-ctx.Done(); ws.CloseNow() }()
 	go a.watchAuth(ctx, r, cancel)
 
@@ -197,6 +199,7 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 				blockStreams(stopHold) // the viewer must not simply reconnect
 				h.kill()               // Stop pressed on the Mac's panel
 				go closeExtended()     // and the extended display goes with it
+				releaseVNC()           // and a Mac unlocked from the phone locks again
 				ws.Close(closeStoppedOnMac, "stopped on the Mac")
 				cancel()
 				return
