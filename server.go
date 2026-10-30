@@ -290,9 +290,22 @@ func (a *app) relayVNC(w http.ResponseWriter, r *http.Request) {
 	}()
 	conn := websocket.NetConn(ctx, ws, websocket.MessageBinary)
 	go func() {
-		io.Copy(conn, tcp)
-		macEnded.Store(true) // the Mac hung up (a wrong password, for one): nothing to keep
-		cancel()
+		// Only a failed read means the Mac hung up (a wrong password, for one): nothing to
+		// keep. A failed write is just the viewer having left while the Mac still sent.
+		buf := make([]byte, 32<<10)
+		for {
+			n, err := tcp.Read(buf)
+			if n > 0 {
+				if _, werr := conn.Write(buf[:n]); werr != nil {
+					return
+				}
+			}
+			if err != nil {
+				macEnded.Store(true)
+				cancel()
+				return
+			}
+		}
 	}()
 	io.Copy(tcp, conn)
 	if hold && !macEnded.Load() {
