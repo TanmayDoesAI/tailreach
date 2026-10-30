@@ -406,9 +406,9 @@ final class Input {
         if let c = Input.named[name] {
             code = c
             if Input.arrows.contains(name) { flags.formUnion([.maskNumericPad, .maskSecondaryFn]) }
-        } else if name.count == 1, let c = Input.chars[Character(name.lowercased())] {
+        } else if name.count == 1, let (c, shift) = Input.keyFor(Character(name)) {
             code = c
-            if name != name.lowercased() { flags.insert(.maskShift) }
+            if shift { flags.insert(.maskShift) }
         } else {
             type(name)
             return
@@ -420,12 +420,17 @@ final class Input {
         }
     }
 
+    /// Types text. A character on a US key goes as that real key press (with Shift if it
+    /// needs it), so web apps and games see the key itself: YouTube's Shift+> or Space, say.
+    /// The character itself rides along, so another keyboard layout on the Mac still types it.
     func type(_ text: String) {
         for ch in text {
             if ch == "\n" || ch == "\r" { key("return", mods: []); continue }
             let u = Array(String(ch).utf16)
+            let k = Input.keyFor(ch)
             for d in [true, false] {
-                let e = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: d)
+                let e = CGEvent(keyboardEventSource: src, virtualKey: k?.0 ?? 0, keyDown: d)
+                e?.flags = k?.1 == true ? .maskShift : []
                 e?.keyboardSetUnicodeString(stringLength: u.count, unicodeString: u)
                 e?.post(tap: .cghidEventTap)
             }
@@ -475,6 +480,19 @@ final class Input {
         "u": 32, "[": 33, "i": 34, "p": 35, "l": 37, "j": 38, "'": 39, "k": 40, ";": 41, "\\": 42,
         ",": 43, "/": 44, "n": 45, "m": 46, ".": 47, "`": 50, " ": 49,
     ]
+    /// The characters Shift makes on a US keyboard, and the key they're on.
+    static let shifted: [Character: Character] = [
+        "!": "1", "@": "2", "#": "3", "$": "4", "%": "5", "^": "6", "&": "7", "*": "8", "(": "9", ")": "0",
+        "_": "-", "+": "=", "{": "[", "}": "]", "|": "\\", ":": ";", "\"": "'", "<": ",", ">": ".", "?": "/", "~": "`",
+    ]
+
+    /// The US key a character is on, and whether it needs Shift.
+    static func keyFor(_ ch: Character) -> (CGKeyCode, Bool)? {
+        if let c = chars[ch] { return (c, false) }
+        if ch.isUppercase, let l = ch.lowercased().first, let c = chars[l] { return (c, true) }
+        if let b = shifted[ch], let c = chars[b] { return (c, true) }
+        return nil
+    }
 }
 
 // MARK: - Commands

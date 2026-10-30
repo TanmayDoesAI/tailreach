@@ -1046,9 +1046,21 @@ document.addEventListener('keydown', (e) => {
   if (e.ctrlKey) m.push('ctrl');
   if (e.shiftKey && (named || chord)) m.push('shift');
   if (named) sendKey(named, m);
-  else if (chord) sendKey(e.key.toLowerCase(), m);
-  else sendText(e.key);
+  else if (chord) sendKey(e.altKey ? keyOf(e) : e.key.toLowerCase(), m);
+  else sendText(e.key);   // the Mac presses the real key (Shift+> included), so shortcuts work
 });
+
+// The key itself, for Option chords: e.key is then what Option makes (⌥E gives a dead key).
+const CODE_KEYS = {
+  Minus: '-', Equal: '=', BracketLeft: '[', BracketRight: ']', Backslash: '\\', Semicolon: ';',
+  Quote: "'", Comma: ',', Period: '.', Slash: '/', Backquote: '`',
+};
+function keyOf(e) {
+  const c = e.code || '';
+  if (/^Key[A-Z]$/.test(c)) return c[3].toLowerCase();
+  if (/^Digit\d$/.test(c)) return c[5];
+  return CODE_KEYS[c] || e.key.toLowerCase();
+}
 
 // iOS may skip deletion events when the textarea is empty. Keep a local sentinel
 // before the caret so Backspace (including hold-to-delete) always has text to delete.
@@ -1259,6 +1271,10 @@ function toggleFullscreen() {
 }
 function markFullscreen() {
   const on = !!fsElement();
+  // In full screen, Chrome and Edge let the page have the keys the browser keeps
+  // (⌘W, ⌘T, Esc…), so those reach the Mac too; hold Esc to leave full screen.
+  if (on) navigator.keyboard?.lock?.().catch(() => {});
+  else navigator.keyboard?.unlock?.();
   $('#fsBtn').innerHTML = icon(on ? 'shrink' : 'expand');
   $('#fsBtn').setAttribute('aria-label', on ? 'Exit full screen' : 'Full screen');
 }

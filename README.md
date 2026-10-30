@@ -92,6 +92,7 @@ In both modes:
 
 **Toolbar.**
 - The ⌘ ⌥ ⌃ ⇧ buttons are sticky: they apply to the next key or click. A hardware keyboard or trackpad on an iPad works directly.
+- Keys reach the Mac as real key presses, so app and website shortcuts work (YouTube's Shift+> for speed, Space, J/K/L). In full screen in Chrome or Edge, the browser's own shortcuts (⌘W, ⌘T, Esc) go to the Mac too; hold Esc to leave full screen. Safari keeps those for itself.
 - The toolbar floats over the screen. Drag its ⠿ grip to put it anywhere (it stays there next time), and tap the grip to fold it down to a small button, or open it again.
 - To hide the toolbar completely, tap the status pill at the top (ping · fps); tap the pill again to bring it back.
 - The full-screen button (desktop browsers, Android, iPad) sits next to **⋯**.
