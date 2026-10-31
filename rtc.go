@@ -75,8 +75,8 @@ type rtcSession struct {
 	lastPong time.Time // zero until the first reply
 
 	mu      sync.Mutex
-	sps     [][]byte
-	pps     [][]byte
+	hevc    bool
+	params  [][]byte // SPS/PPS (and HEVC's VPS), sent in front of every keyframe
 	pkt     rtp.Packetizer
 	basePTS uint64 // µs of the first frame
 	baseRTP uint32
@@ -88,9 +88,10 @@ type rtcSession struct {
 // Keyframes are expensive; heavy loss can ask for one per packet. One per this long is plenty.
 const keyframeEvery = 300 * time.Millisecond
 
-// newRTC answers the browser's offer. onKeyframe is called when the browser asks for one;
-// onInput for each command arriving on a data channel, with a way to answer on it.
-func (a *app) newRTC(offer string, onKeyframe, onConnected, onFailed func(),
+// newRTC answers the browser's offer, with HEVC video if hevc (the viewer asked for it,
+// having checked it can decode it), else H.264. onKeyframe is called when the browser asks
+// for one; onInput for each command arriving on a data channel, with a way to answer on it.
+func (a *app) newRTC(offer string, hevc bool, onKeyframe, onConnected, onFailed func(),
 	onInput func(msg []byte, reply func([]byte))) (*rtcSession, string, error) {
 	mux, err := a.iceMux()
 	if err != nil {
@@ -99,19 +100,25 @@ func (a *app) newRTC(offer string, onKeyframe, onConnected, onFailed func(),
 
 	m := &webrtc.MediaEngine{}
 	feedback := []webrtc.RTCPFeedback{{Type: "nack"}, {Type: "nack", Parameter: "pli"}, {Type: "ccm", Parameter: "fir"}}
-	for pt, profile := range map[webrtc.PayloadType]string{102: "640c1f", 106: "42e01f"} {
+	mime := webrtc.MimeTypeH264
+	fmtps := map[webrtc.PayloadType]string{
+		102: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=640c1f",
+		106: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f",
+	}
+	if hevc {
+		mime = webrtc.MimeTypeH265
+		fmtps = map[webrtc.PayloadType]string{116: "level-id=180;profile-id=1;tier-flag=0;tx-mode=SRST"}
+	}
+	for pt, fmtp := range fmtps {
 		if err := m.RegisterCodec(webrtc.RTPCodecParameters{
-			RTPCodecCapability: webrtc.RTPCodecCapability{
-				MimeType: webrtc.MimeTypeH264, ClockRate: 90000, RTCPFeedback: feedback,
-				SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=" + profile,
-			},
-			PayloadType: pt,
+			RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: mime, ClockRate: 90000, RTCPFeedback: feedback, SDPFmtpLine: fmtp},
+			PayloadType:        pt,
 		}, webrtc.RTPCodecTypeVideo); err != nil {
 			return nil, "", err
 		}
 	}
 
-	s := &rtcSession{done: make(chan struct{})}
+	s := &rtcSession{done: make(chan struct{}), hevc: hevc}
 	// Only what the stream uses: NACK retransmits (trimmed by nackLimiter) and RTCP reports,
 	// whose loss figure feeds the rate controller. No congestion-control interceptor (GCC,
 	// transport-cc): rateCtl reads the queue directly, and those would cost work per packet.
@@ -136,7 +143,7 @@ func (a *app) newRTC(offer string, onKeyframe, onConnected, onFailed func(),
 		return nil, "", err
 	}
 	s.pc = pc
-	s.track, err = webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264, ClockRate: 90000}, "screen", "mydevices")
+	s.track, err = webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{MimeType: mime, ClockRate: 90000}, "screen", "mydevices")
 	if err != nil {
 		pc.Close()
 		return nil, "", err
@@ -147,7 +154,11 @@ func (a *app) newRTC(offer string, onKeyframe, onConnected, onFailed func(),
 		return nil, "", err
 	}
 	// SSRC and payload type are filled in per connection by the track.
-	s.pkt = rtp.NewPacketizer(1200, 0, 0, &codecs.H264Payloader{}, rtp.NewRandomSequencer(), 90000)
+	var payloader rtp.Payloader = &codecs.H264Payloader{}
+	if hevc {
+		payloader = &codecs.H265Payloader{}
+	}
+	s.pkt = rtp.NewPacketizer(1200, 0, 0, payloader, rtp.NewRandomSequencer(), 90000)
 	s.baseRTP = randUint32()
 	go func() { // keyframe requests from the browser (decoder reset, heavy loss)
 		for {
@@ -241,7 +252,8 @@ func (a *app) newRTC(offer string, onKeyframe, onConnected, onFailed func(),
 	return s, pc.LocalDescription().SDP, nil
 }
 
-// setConfig takes the helper's decoder config message ([1][u16 len][json][avcC]) and keeps SPS/PPS.
+// setConfig takes the helper's decoder config message ([1][u16 len][json][avcC or hvcC])
+// and keeps its parameter sets.
 func (s *rtcSession) setConfig(msg []byte) {
 	if len(msg) < 3 {
 		return
@@ -250,9 +262,15 @@ func (s *rtcSession) setConfig(msg []byte) {
 	if len(msg) < 3+jl {
 		return
 	}
-	sps, pps := parseAvcC(msg[3+jl:])
+	var params [][]byte
+	if s.hevc {
+		params = parseHvcC(msg[3+jl:])
+	} else {
+		sps, pps := parseAvcC(msg[3+jl:])
+		params = append(sps, pps...)
+	}
 	s.mu.Lock()
-	s.sps, s.pps = sps, pps
+	s.params = params
 	s.mu.Unlock()
 }
 
@@ -275,9 +293,9 @@ func (s *rtcSession) writeFrame(msg []byte) error {
 	}
 	s.lastRTP = ts
 	var annexB []byte
-	if key { // decoders need SPS/PPS in front of every keyframe
+	if key { // decoders need the parameter sets in front of every keyframe
 		s.lastKF = time.Now()
-		for _, n := range append(append([][]byte{}, s.sps...), s.pps...) {
+		for _, n := range s.params {
 			annexB = append(append(annexB, 0, 0, 0, 1), n...)
 		}
 	}
@@ -431,6 +449,28 @@ func parseAvcC(b []byte) (sps, pps [][]byte) {
 		i += n
 	}
 	return
+}
+
+// parseHvcC pulls the VPS, SPS and PPS out of an HEVCDecoderConfigurationRecord.
+func parseHvcC(b []byte) (params [][]byte) {
+	if len(b) < 23 {
+		return nil
+	}
+	i, arrays := 23, int(b[22])
+	for k := 0; k < arrays && i+3 <= len(b); k++ {
+		n := int(binary.BigEndian.Uint16(b[i+1:]))
+		i += 3
+		for j := 0; j < n && i+2 <= len(b); j++ {
+			l := int(binary.BigEndian.Uint16(b[i:]))
+			i += 2
+			if i+l > len(b) {
+				return params
+			}
+			params = append(params, append([]byte(nil), b[i:i+l]...))
+			i += l
+		}
+	}
+	return params
 }
 
 func jsonMsg(v any) []byte {

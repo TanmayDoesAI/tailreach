@@ -5,12 +5,13 @@ This note is for anyone changing the video path. It explains what the code in `s
 ## The path
 
 ```
-ScreenCaptureKit → VideoToolbox H.264 (helper, Swift)
+ScreenCaptureKit → VideoToolbox H.264 or HEVC (helper, Swift)
       → stdout frames → mydevices (Go)
       → WebRTC over the tailnet (pion) → Safari's hardware decoder → <video>
 ```
 
-- **Capture** runs at the resolution the viewing screen actually shows. Nothing is sent while the screen is still. When motion stops, the last frame is re-encoded a few times so text sharpens up.
+- **Capture** runs at the resolution the viewing screen actually shows. Nothing is sent while the screen is still. When motion stops, the last frame is re-encoded four times at 2.5× the bitrate (the link is idle then), so text sharpens up.
+- **Codec:** HEVC when the viewer says it can play it both over WebRTC and with WebCodecs (it checks before connecting), otherwise H.264. It's fixed for the session; ⋯ → Video → H.264 forces H.264.
 - **WebRTC** carries the video as UDP over the tailnet, with a minimal jitter buffer on the phone (`jitterBufferTarget = 0`).
 - **Fallback:** if WebRTC can't connect, the same H.264 goes over the WebSocket and is decoded with WebCodecs.
 

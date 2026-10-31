@@ -6,8 +6,8 @@
 //
 // `mydevices` keeps one warm for a short while after a viewer leaves, so coming back is instant.
 //   stdout: frames  [u32 big-endian length][u8 type][payload]
-//             type 1 = decoder config: [u16 json length][json {codec,w,h}][avcC]
-//             type 2 = video:          [u8 keyframe][u64 timestamp µs][AVCC NAL units]
+//             type 1 = decoder config: [u16 json length][json {codec,w,h}][avcC or hvcC]
+//             type 2 = video:          [u8 keyframe][u64 timestamp µs][length-prefixed NAL units]
 //             type 3 = event (json):   {"t":"started"|"error"|"cursor"|"displays",...}
 //   stdin:   one JSON command per line (see `handle(_:)`)
 import AppKit
@@ -68,14 +68,16 @@ func log(_ s: String) {
 private let dlogTime: DateFormatter = { let f = DateFormatter(); f.dateFormat = "HH:mm:ss"; return f }()
 #endif
 
-// MARK: - Encoder (VideoToolbox, hardware H.264, low-latency rate control)
+// MARK: - Encoder (VideoToolbox, hardware H.264 or HEVC, low-latency rate control)
 
 final class Encoder {
     private var session: VTCompressionSession?
     private var lastConfig: Data?
+    private var boosted = false
     var forceKey = true
     var bitrate = 8_000_000
     var fps = 60
+    var hevc = false // HEVC: sharper text at the same bitrate, for viewers that can decode it
 
     func setup(width: Int, height: Int) {
         invalidate()
@@ -83,7 +85,7 @@ final class Encoder {
         var s: VTCompressionSession?
         let st = VTCompressionSessionCreate(
             allocator: nil, width: Int32(width), height: Int32(height),
-            codecType: kCMVideoCodecType_H264, encoderSpecification: spec,
+            codecType: hevc ? kCMVideoCodecType_HEVC : kCMVideoCodecType_H264, encoderSpecification: spec,
             imageBufferAttributes: nil, compressedDataAllocator: nil,
             outputCallback: nil, refcon: nil, compressionSessionOut: &s)
         guard st == noErr, let s else {
@@ -92,7 +94,8 @@ final class Encoder {
         }
         VTSessionSetProperty(s, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue)
         VTSessionSetProperty(s, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
-        VTSessionSetProperty(s, key: kVTCompressionPropertyKey_ProfileLevel, value: kVTProfileLevel_H264_ConstrainedHigh_AutoLevel)
+        VTSessionSetProperty(s, key: kVTCompressionPropertyKey_ProfileLevel,
+                             value: hevc ? kVTProfileLevel_HEVC_Main_AutoLevel : kVTProfileLevel_H264_ConstrainedHigh_AutoLevel)
         VTSessionSetProperty(s, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: fps as CFNumber)
         VTSessionSetProperty(s, key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, value: 30 as CFNumber)
         VTSessionSetProperty(s, key: kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality, value: kCFBooleanTrue)
@@ -100,6 +103,7 @@ final class Encoder {
         session = s
         lastConfig = nil
         forceKey = true
+        boosted = false
         setBitrate(bitrate)
     }
 
@@ -113,7 +117,17 @@ final class Encoder {
         bitrate = max(500_000, min(bps, 50_000_000))
         dlog("encoder bitrate \(bitrate / 1000) kbps")
         guard let s = session else { return }
+        boosted = false
         VTSessionSetProperty(s, key: kVTCompressionPropertyKey_AverageBitRate, value: bitrate as CFNumber)
+    }
+
+    /// More bits for the few frames that sharpen a still screen: the link is idle then, and
+    /// at the normal rate each of them only gets a moving frame's share.
+    func boost(_ on: Bool) {
+        guard on != boosted, let s = session else { return }
+        boosted = on
+        let bps = on ? min(bitrate * 5 / 2, 50_000_000) : bitrate
+        VTSessionSetProperty(s, key: kVTCompressionPropertyKey_AverageBitRate, value: bps as CFNumber)
     }
 
     func encode(_ pb: CVPixelBuffer, pts: CMTime) {
@@ -137,15 +151,18 @@ final class Encoder {
 
         if isKey, let fd = sb.formatDescription,
            let atoms = CMFormatDescriptionGetExtension(fd, extensionKey: kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms) as? [String: Any],
-           let avcC = atoms["avcC"] as? Data, avcC.count >= 4, avcC != lastConfig {
-            lastConfig = avcC
+           let cfg = (atoms["avcC"] ?? atoms["hvcC"]) as? Data, cfg.count >= 13, cfg != lastConfig {
+            lastConfig = cfg
             let dims = CMVideoFormatDescriptionGetDimensions(fd)
-            let codec = String(format: "avc1.%02x%02x%02x", avcC[1], avcC[2], avcC[3])
+            // WebCodecs' name for the stream: profile and level from the config record.
+            let codec = atoms["hvcC"] != nil
+                ? String(format: "hvc1.%d.6.%@%d.B0", cfg[1] & 0x1f, cfg[1] & 0x20 != 0 ? "H" : "L", cfg[12])
+                : String(format: "avc1.%02x%02x%02x", cfg[1], cfg[2], cfg[3])
             let json = try! JSONSerialization.data(withJSONObject: ["codec": codec, "w": dims.width, "h": dims.height])
             var p = Data()
             withUnsafeBytes(of: UInt16(json.count).bigEndian) { p.append(contentsOf: $0) }
             p.append(json)
-            p.append(avcC)
+            p.append(cfg)
             emit(1, p)
         }
 
@@ -181,7 +198,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     private var timer: DispatchSourceTimer?
     private var params: [Int] = []
     private var startedEvent: [String: Any] = [:]
-    private var wanted: (Int, Int, Int, Bool, CGDirectDisplayID)? // what the viewer asked for, for automatic retries
+    private var wanted: (Int, Int, Int, Bool, CGDirectDisplayID, Bool)? // what the viewer asked for, for automatic retries
     private var retries = 0
 
     /// macOS's capture service sometimes drops a session (it's busy, or the Mac is hot).
@@ -197,15 +214,15 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         log("capture interrupted (\(why)); retry \(retries) in \(delay)s")
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
             guard viewing else { return }
-            Task { self.stream = nil; self.params = []; await self.start(maxW: w.0, maxH: w.1, fps: w.2, cursor: w.3, display: w.4) }
+            Task { self.stream = nil; self.params = []; await self.start(maxW: w.0, maxH: w.1, fps: w.2, cursor: w.3, display: w.4, hevc: w.5) }
         }
     }
 
     /// display 0 means the main display. One that's gone (unplugged) falls back to it too.
-    func start(maxW: Int, maxH: Int, fps: Int, cursor: Bool, display: CGDirectDisplayID) async {
+    func start(maxW: Int, maxH: Int, fps: Int, cursor: Bool, display: CGDirectDisplayID, hevc: Bool) async {
         // Same settings and still running (a viewer coming back): just send a fresh keyframe.
-        wanted = (maxW, maxH, fps, cursor, display)
-        let p = [maxW, maxH, fps, cursor ? 1 : 0, Int(display)]
+        wanted = (maxW, maxH, fps, cursor, display, hevc)
+        let p = [maxW, maxH, fps, cursor ? 1 : 0, Int(display), hevc ? 1 : 0]
         if stream != nil, p == params {
             dlog("start: same settings, still capturing: fresh keyframe only")
             resendConfig()
@@ -246,6 +263,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
             if let old = stream { try? await old.stopCapture() }
             q.sync {
                 enc.fps = fps
+                enc.hevc = hevc
                 enc.setup(width: w, height: h)
                 lastPB = nil
             }
@@ -288,6 +306,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         lastPB = pb
         lastFrameAt = Date()
         refinements = 0
+        enc.boost(false)
         enc.encode(pb, pts: sb.presentationTimeStamp)
     }
 
@@ -302,7 +321,8 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         retryLater(error.localizedDescription)
     }
 
-    /// When the screen stops changing, re-encode the last frame a few times so text sharpens up.
+    /// When the screen stops changing, re-encode the last frame a few times, with more bits
+    /// each (boost), so text sharpens up.
     private func startRefineTimer() {
         timer?.cancel()
         let t = DispatchSource.makeTimerSource(queue: q)
@@ -310,8 +330,9 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         t.setEventHandler { [weak self] in
             guard let self, let pb = self.lastPB else { return }
             let idle = Date().timeIntervalSince(self.lastFrameAt)
-            if (idle > 0.2 && self.refinements < 3) || self.enc.forceKey {
+            if (idle > 0.2 && self.refinements < 4) || self.enc.forceKey {
                 self.refinements += 1
+                if idle > 0.2 { self.enc.boost(true) }
                 self.enc.encode(pb, pts: CMClockGetTime(CMClockGetHostTimeClock()))
             }
         }
@@ -542,7 +563,7 @@ func handle(_ c: [String: Any]) {
                 sendDisplays()
             }
             await capture.start(maxW: max(320, w), maxH: max(240, h), fps: (10...120).contains(fps) ? fps : 60,
-                                cursor: !localCursor, display: display)
+                                cursor: !localCursor, display: display, hevc: c["codec"] as? String == "hevc")
         }
     case "stop":
         inputQ.async { input.releaseAll() }

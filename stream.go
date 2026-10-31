@@ -150,6 +150,7 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 		drops      atomic.Int64
 		sentBytes  atomic.Int64
 		holdWS     atomic.Bool // the viewer is connecting WebRTC: no video on the WebSocket meanwhile
+		hevc       atomic.Bool // the viewer asked for HEVC (it checked it can decode it)
 	)
 	bitrate.Store(rtcStartRate)
 	maxBitrate.Store(20_000_000)
@@ -451,7 +452,7 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 			if old := rtc.Swap(nil); old != nil {
 				old.close()
 			}
-			sess, answer, err := a.newRTC(sdp,
+			sess, answer, err := a.newRTC(sdp, hevc.Load(),
 				func() { toHelper(map[string]any{"t": "kf"}) },
 				func() { // connected: switch video over with a fresh keyframe (SPS/PPS in front)
 					if cfg := lastConfig.Load(); cfg != nil {
@@ -485,6 +486,10 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 			first, _ := c["rtcFirst"].(bool)
 			holdWS.Store(first)
 			delete(c, "rtcFirst")
+			if c["codec"] != "hevc" {
+				delete(c, "codec")
+			}
+			hevc.Store(c["codec"] == "hevc")
 			if mb, ok := c["maxbr"].(float64); ok && mb >= minBitrate {
 				maxBitrate.Store(min(int64(mb), 50_000_000))
 			}

@@ -33,6 +33,7 @@ func main() {
 	secs := flag.Int("t", 6, "seconds to run")
 	nudge := flag.Bool("nudge", false, "move the Mac's cursor 40 points right and back, to check input works")
 	display := flag.Int("display", 0, "display ID to show (0 = main; the IDs are printed in the displays event)")
+	useHEVC := flag.Bool("hevc", false, "ask for HEVC video instead of H.264")
 	upload := flag.String("upload", "", "send this file to the Mac's Downloads instead, as a viewer would")
 	flag.Parse()
 	page, _ := url.Parse(flag.Arg(0))
@@ -64,7 +65,11 @@ func main() {
 		}
 		c.Write(ctx, websocket.MessageText, b)
 	}
-	send(map[string]any{"t": "start", "w": 2556, "h": 2556, "fps": 60, "maxbr": 20000000, "localCursor": true, "display": *display})
+	codec := "h264"
+	if *useHEVC {
+		codec = "hevc"
+	}
+	send(map[string]any{"t": "start", "w": 2556, "h": 2556, "fps": 60, "maxbr": 20000000, "localCursor": true, "display": *display, "codec": codec})
 
 	send(map[string]any{"t": "diag"})
 	if *nudge {

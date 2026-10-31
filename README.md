@@ -96,6 +96,7 @@ In both modes:
 - The toolbar floats over the screen. Drag its ⠿ grip to put it anywhere (it stays there next time), and tap the grip to fold it down to a small button, or open it again.
 - To hide the toolbar completely, tap the status pill at the top (ping · fps); tap the pill again to bring it back.
 - The full-screen button (desktop browsers, Android, iPad) sits next to **⋯**.
+- **Sharper text:** where the browser can play HEVC (recent Safari, Chrome and Edge), the Mac sends HEVC instead of H.264, which keeps text crisper at the same bitrate. When the screen stops moving, a few extra frames with more bits sharpen it further. **⋯ → Video → H.264** switches HEVC off.
 - **Sending files:** drop files anywhere on the screen, or use **⋯ → Send a file to the Mac**. They're saved in the Mac's Downloads; nothing is ever replaced, and the viewer can't read files on the Mac.
 - **More than one display:** pick which one to show in the **⋯** panel. It switches live, and taps, the pointer and the cursor follow it.
 

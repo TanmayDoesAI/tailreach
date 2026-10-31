@@ -31,6 +31,7 @@ const settings = {
   extHz: store.get('extHz', 30),         // refresh rate asked of the extended display: 30 is plenty and costs the Mac less
   barAt: store.get('barAt', null),       // where the toolbar floats: its centre as fractions of the screen; null = bottom centre
   barMini: store.get('barMini', false),  // folded down to just its grip
+  codec: store.get('codec', 'auto'),     // 'auto' = HEVC when this browser can play it, else H.264
 };
 document.body.classList.toggle('bar-mini', settings.barMini);
 
@@ -86,7 +87,19 @@ async function boot() {
     setState('off', 'Can’t reach this device.');
     return setTimeout(boot, 3000);
   }
+  hevc = settings.codec === 'auto' && await canHevc();
   connect();
+}
+
+// HEVC carries sharper text than H.264 at the same bitrate. Used only when this browser
+// can play it both ways the video may come: WebRTC, and WebCodecs on the WebSocket.
+let hevc = false;
+async function canHevc() {
+  try {
+    if (rtcWanted() && !RTCRtpReceiver.getCapabilities?.('video')?.codecs?.some((c) => /h265/i.test(c.mimeType))) return false;
+    const r = await VideoDecoder.isConfigSupported({ codec: 'hvc1.1.6.L153.B0', codedWidth: 1920, codedHeight: 1080 });
+    return !!r.supported;
+  } catch { return false; }
 }
 
 let takeNext = false;      // the next connection takes the Mac from whoever has it
@@ -140,7 +153,7 @@ function sendStart() {
   const side = Math.min(p.maxSide, Math.round(Math.max(screen.width, screen.height) * devicePixelRatio));
   // rtcFirst: no WebSocket video while WebRTC connects. Over a relay (just after a
   // network switch) it would run seconds behind; the last frame waits instead.
-  send({ t: 'start', w: side, h: side, fps: extShown() ? settings.extHz : +settings.fps, maxbr: p.maxbr, localCursor: true, display: settings.display, rtcFirst: rtcWanted() });
+  send({ t: 'start', w: side, h: side, fps: extShown() ? settings.extHz : +settings.fps, maxbr: p.maxbr, localCursor: true, display: settings.display, rtcFirst: rtcWanted(), codec: hevc ? 'hevc' : 'h264' });
 }
 
 // Another device has the Mac. Ask, instead of kicking it (which makes the two fight).
@@ -337,7 +350,8 @@ async function startRTC(keepPicture = false) {
     moveDC = pc.createDataChannel('move', { ordered: false, maxRetransmits: 0 });
     for (const dc of [inputDC, moveDC]) dc.onmessage = (e) => onEvent(JSON.parse(e.data));   // pongs, cursor reports
     try {
-      const codecs = RTCRtpReceiver.getCapabilities('video').codecs.filter((c) => /h264/i.test(c.mimeType));
+      const want = hevc ? /h265/i : /h264/i;
+      const codecs = RTCRtpReceiver.getCapabilities('video').codecs.filter((c) => want.test(c.mimeType));
       if (codecs.length) tr.setCodecPreferences(codecs);
     } catch {}
     pc.ontrack = (e) => {
@@ -520,7 +534,7 @@ setInterval(() => {
       $('#statusText').textContent = `${stats.rtt} ms · ${stats.fps} fps${relayed ? ' · relayed' : ''}`;
       $('#status').classList.toggle('rtc', document.body.classList.contains('rtc'));
     }
-    $('#status').title = `${stats.path || 'unknown path'} · ${stats.fps} fps · ${(stats.kbps / 1000).toFixed(1)} Mbps`;
+    $('#status').title = `${stats.path || 'unknown path'} · ${hevc ? 'HEVC' : 'H.264'} · ${stats.fps} fps · ${(stats.kbps / 1000).toFixed(1)} Mbps`;
   }
 }, 1000);
 
@@ -1581,6 +1595,7 @@ document.addEventListener('click', (e) => {
   settings[key] = key === 'fps' ? +v : v;
   store.set(key, settings[key]);
   markSegments();
+  if (key === 'codec') return location.reload();   // a fresh start with the other codec
   ws?.close();   // reconnect with the new stream settings
 });
 $('#speed').value = settings.speed;
