@@ -33,7 +33,7 @@ func doctor(args []string) error {
 		d.section("This Mac")
 		if out, _ := exec.Command("sysctl", "-n", "hw.optional.arm64").Output(); strings.TrimSpace(string(out)) == "1" && runtime.GOARCH == "amd64" {
 			d.warn("Built for Intel, so it runs through Rosetta and uses more CPU while streaming",
-				"install the Apple silicon Go (go.dev/dl, darwin-arm64), then `make reload`")
+				"`make reload` (it builds for this Mac's CPU), or `mydevices setup` for a Homebrew copy")
 		} else {
 			d.ok("Native build (%s)", runtime.GOARCH)
 		}
@@ -154,7 +154,7 @@ func (d *checkup) loginItem(exe string) {
 		return
 	}
 	if got := strings.TrimSpace(string(out)); got != launchPath(exe) {
-		d.warn("The login item runs "+got+", not this copy", "run `./mydevices install …` from the copy you want, with the same flags")
+		d.warn("The login item runs "+got+", not this copy", setupFix(exe, "run `./mydevices install …` from the copy you want, with the same flags"))
 	}
 	// Just after a rebuild, launchd waits a few seconds before starting it again.
 	running := func() bool {

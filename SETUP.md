@@ -18,6 +18,11 @@ git clone https://github.com/TanmayDoesAI/tailreach.git && cd tailreach
 make setup          # signing identity, build, login item, then a check of everything
 ```
 
+With Homebrew instead of a clone: `brew tap tanmaydoesai/tailreach https://github.com/TanmayDoesAI/tailreach`,
+`brew install --HEAD tailreach`, then `mydevices setup` (it does what `make setup` does, for
+the installed copy; run it again after every upgrade). Use `mydevices` wherever this guide
+says `./mydevices`.
+
 `make setup` does every step that doesn't need you, and is safe to run again. It ends with
 `./mydevices doctor`, which lists what's left with the exact fix for each:
 
@@ -46,7 +51,7 @@ The numbered steps below are the same thing done by hand, with the reasoning.
 |---|---|
 | macOS 14+ on Apple silicon (Intel works too) | `sw_vers -productVersion`, `uname -m` |
 | Xcode Command Line Tools (for `swiftc`, `codesign`) | `xcode-select -p` → if missing: `xcode-select --install` (human clicks Install) |
-| Go 1.24+ | `go version` → if missing: `brew install go` |
+| Go 1.27+ | `go version` → if missing: `brew install go` |
 | A Tailscale account, with the Tailscale app on the **phone/tablet** you'll use | human confirms |
 
 You don't need the Tailscale app on the Mac being shared: the binary embeds its own Tailscale node. It's fine if the app is there anyway.

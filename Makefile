@@ -21,8 +21,10 @@ SIGN := mydevices local
 
 # This Mac: the server plus the native screen helper next to it, signed with a stable
 # local identity (scripts/signing-identity.sh) so macOS keeps their permissions across builds.
+# Built for this Mac's own CPU even by an Intel Go on Apple silicon (no Rosetta while streaming).
+NATIVE := $(shell uname -m | sed 's/x86_64/amd64/')
 local: capture
-	CGO_ENABLED=0 go build $(GOTAGS) -trimpath -ldflags '$(LDFLAGS)' -o mydevices .
+	CGO_ENABLED=0 GOARCH=$(NATIVE) go build $(GOTAGS) -trimpath -ldflags '$(LDFLAGS)' -o mydevices .
 	codesign --force -s "$(SIGN)" --identifier com.mydevices.agent mydevices
 
 capture:

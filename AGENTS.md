@@ -17,6 +17,7 @@ Go server with embedded Tailscale (`tsnet`), a Swift capture/input helper, and a
 | Path | What |
 |---|---|
 | `main.go` | flags, subcommands (`install`, `settings`, `password`, `doctor`, `version`), tsnet startup |
+| `setup.go` | `mydevices setup`: signs an installed (Homebrew) copy, login item, doctor; `Formula/tailreach.rb` is the tap |
 | `doctor.go` | `mydevices doctor`: checks the whole setup, prints the fix for each problem |
 | `server.go` | HTTP routes, Tailscale `WhoIs` owner check, hub ↔ device proxy, discovery |
 | `auth.go` | passkeys (WebAuthn), sessions, pairing codes, audit log |

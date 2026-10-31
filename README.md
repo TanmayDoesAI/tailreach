@@ -50,7 +50,17 @@ git clone https://github.com/TanmayDoesAI/tailreach.git && cd tailreach
 make setup
 ```
 
-There are no downloads: tailreach is built from source on your own Mac, and `make setup` handles the rest. It builds tailreach, signs it with a local identity (so macOS remembers its permissions), and makes it start at login. It finishes with `./mydevices doctor`, which checks everything and tells you what's left, with the exact fix for each:
+**Or with Homebrew** (it fetches Go for the build itself; you still need the Command Line Tools):
+
+```sh
+brew tap tanmaydoesai/tailreach https://github.com/TanmayDoesAI/tailreach
+brew install --HEAD tailreach
+mydevices setup
+```
+
+Run `mydevices setup` again after each `brew upgrade --fetch-HEAD tailreach`: Homebrew can't use your keychain while it builds, so `setup` is what signs the new copy and keeps macOS's permissions in place.
+
+There are no downloads: tailreach is built from source on your own Mac, and `make setup` (or `mydevices setup`) handles the rest. It builds tailreach, signs it with a local identity (so macOS remembers its permissions), and makes it start at login. It finishes with `mydevices doctor`, which checks everything and tells you what's left, with the exact fix for each:
 
 - approving the Tailscale sign-in;
 - choosing a device password;
@@ -72,6 +82,8 @@ The agent reads `AGENTS.md` and `SETUP.md`. They tell it never to set your passw
 make setup FLAGS='--name mac2'              # shown at /mac2/ on the first Mac's dashboard
 make setup FLAGS='--name mac2 --via ""'     # or on its own, with its own sign-in
 ```
+
+With Homebrew, it's `mydevices setup --name mac2` (or `mydevices setup --name mac2 --via ""`).
 
 `./mydevices uninstall` removes the login item.
 
