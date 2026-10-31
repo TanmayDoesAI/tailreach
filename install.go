@@ -26,6 +26,7 @@ func install(args []string) error {
 		return err
 	}
 	exe, _ = filepath.EvalSymlinks(exe)
+	exe = launchPath(exe)
 	logFile := filepath.Join(defaultStateDir(), "mydevices.log")
 	os.MkdirAll(filepath.Dir(logFile), 0o700)
 

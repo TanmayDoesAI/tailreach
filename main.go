@@ -57,6 +57,9 @@ func main() {
 
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "setup":
+			exitOn(setup(os.Args[2:]))
+			return
 		case "install":
 			exitOn(install(os.Args[2:]))
 			return
@@ -253,6 +256,7 @@ func usage() {
 Usage:
   mydevices [flags]              run on this machine (prints a login link the first time)
   mydevices --hub [flags]        also serve the dashboard at https://devices.<tailnet>.ts.net/
+  mydevices setup [flags]        set up an installed copy (Homebrew): sign it, login item, doctor
   mydevices install [flags]      start automatically at login (macOS), same flags as above
   mydevices uninstall            stop and remove the login item
   mydevices settings             open the settings window on this Mac (password, trusted devices, sessions)

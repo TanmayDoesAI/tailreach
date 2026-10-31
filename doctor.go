@@ -40,7 +40,7 @@ func doctor(args []string) error {
 		if exec.Command("security", "find-certificate", "-c", "mydevices local").Run() == nil {
 			d.ok("Signing identity \"mydevices local\"")
 		} else {
-			d.fail("No signing identity \"mydevices local\": permissions would reset on every build", "sh scripts/signing-identity.sh, then `make reload`")
+			d.fail("No signing identity \"mydevices local\": permissions would reset on every build", setupFix(exe, "sh scripts/signing-identity.sh, then `make reload`"))
 		}
 		for _, b := range []struct{ path, id string }{{exe, "com.mydevices.agent"}, {helperPath(), "com.mydevices.capture"}} {
 			name := filepath.Base(b.path)
@@ -49,7 +49,7 @@ func doctor(args []string) error {
 			case err != nil && strings.Contains(string(out), "No such file"):
 				d.fail(name+" is missing", "make local")
 			case !strings.Contains(string(out), "Authority=mydevices local") || !strings.Contains(string(out), "Identifier="+b.id):
-				d.fail(name+" isn't signed with \"mydevices local\"", "make local (after sh scripts/signing-identity.sh)")
+				d.fail(name+" isn't signed with \"mydevices local\"", setupFix(exe, "make local (after sh scripts/signing-identity.sh)"))
 			default:
 				d.ok("%s signed", name)
 			}
@@ -138,6 +138,14 @@ func doctor(args []string) error {
 	return d.done()
 }
 
+// setupFix is the fix for a Homebrew copy (`mydevices setup`), or else the one for a checkout.
+func setupFix(exe, checkout string) string {
+	if launchPath(exe) != exe {
+		return "mydevices setup"
+	}
+	return checkout
+}
+
 // loginItem checks that the LaunchAgent exists, runs this very binary and is running.
 func (d *checkup) loginItem(exe string) {
 	out, err := exec.Command("plutil", "-extract", "ProgramArguments.0", "raw", "-o", "-", plistPath()).Output()
@@ -145,7 +153,7 @@ func (d *checkup) loginItem(exe string) {
 		d.fail("Doesn't start at login", "`./mydevices install --hub --name mac` (or `make setup`)")
 		return
 	}
-	if got := strings.TrimSpace(string(out)); got != exe {
+	if got := strings.TrimSpace(string(out)); got != launchPath(exe) {
 		d.warn("The login item runs "+got+", not this copy", "run `./mydevices install …` from the copy you want, with the same flags")
 	}
 	// Just after a rebuild, launchd waits a few seconds before starting it again.
