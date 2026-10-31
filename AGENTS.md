@@ -27,6 +27,7 @@ Go server with embedded Tailscale (`tsnet`), a Swift capture/input helper, and a
 | `debug*.go` | `dlog` and the `debug` build tag (`make DEBUG=1`) |
 | `vrec.go` | measurement mode: the viewer's own receive stats, logged on the Mac (switched on from the control socket) |
 | `vdisplay*.go` | extended display: a virtual second monitor (private CGVirtualDisplay via `go-macos/virtualdisplay`), child process `mydevices vdisplay` owns it, idle auto-close; never the main display |
+| `files.go` | files sent from the viewer, saved as new files in `~/Downloads` (write-only) |
 | `vnchold.go` | keeps the phone's unlock connection to Screen Sharing open (idle) while anyone views, since macOS re-locks when it ends |
 | `helper.go` | one warm `mydevices-capture` process shared across reconnects |
 | `capture/*.swift` | ScreenCaptureKit + VideoToolbox H.264, CGEvent input, "Screen shared" panel, settings window |
@@ -62,6 +63,7 @@ CGO_ENABLED=0 GOARCH=arm64 go vet .
 ## Invariants: don't break these
 
 - **Viewers can only see the screen and send input/clipboard.** No command execution, file access or background work. The command list is `allowedCmds` in `stream.go`, and data-channel input goes through the same `forward` check.
+  - The one file exception is `files.go`: a viewer can add a new file to `~/Downloads` (never overwrite, read, list or open one), up to 4 GB.
 - **Clicks from absolute pointing (touch mode, mouse) carry their own `x`,`y`.** Moves travel on the unreliable `move` channel, so a click must not depend on the move before it having arrived.
 - **Every HTTP request passes `auth()` (tailnet owner via `WhoIs`).** On hub/standalone it also passes `requireSession` (device password trust plus session).
 - **Settings are only reachable over the Unix control socket,** with a peer-UID check. Never add network routes for them.

@@ -92,10 +92,11 @@ In both modes:
 
 **Toolbar.**
 - The ⌘ ⌥ ⌃ ⇧ buttons are sticky: they apply to the next key or click. A hardware keyboard or trackpad on an iPad works directly.
-- Keys reach the Mac as real key presses, so app and website shortcuts work (YouTube's Shift+> for speed, Space, J/K/L). In full screen in Chrome or Edge, the browser's own shortcuts (⌘W, ⌘T, Esc) go to the Mac too; hold Esc to leave full screen. Safari keeps those for itself.
+- Keys reach the Mac as real key presses, so app and website shortcuts work (YouTube's Shift+> for speed, Space, J/K/L), and a key held down stays held on the Mac (games, hold-to-repeat). In full screen in Chrome or Edge, the browser's own shortcuts (⌘W, ⌘T, Esc) go to the Mac too; hold Esc to leave full screen. Safari keeps those for itself.
 - The toolbar floats over the screen. Drag its ⠿ grip to put it anywhere (it stays there next time), and tap the grip to fold it down to a small button, or open it again.
 - To hide the toolbar completely, tap the status pill at the top (ping · fps); tap the pill again to bring it back.
 - The full-screen button (desktop browsers, Android, iPad) sits next to **⋯**.
+- **Sending files:** drop files anywhere on the screen, or use **⋯ → Send a file to the Mac**. They're saved in the Mac's Downloads; nothing is ever replaced, and the viewer can't read files on the Mac.
 - **More than one display:** pick which one to show in the **⋯** panel. It switches live, and taps, the pointer and the cursor follow it.
 
 ## Extended display (Mac)
@@ -156,7 +157,7 @@ Every request has to pass all of these layers:
    - macOS also shows its screen-recording indicator, and notifications cover new passkeys and trusted devices.
    - Everything is written to `~/Library/Application Support/mydevices/audit.log`.
 8. **Settings only on the Mac.** The settings window talks to mydevices over a Unix socket that only your macOS user can open. Nothing about settings is reachable over the network.
-9. **Screen and input only.** Viewers can see the screen, point, type, scroll and use the clipboard (secrets copied from password managers are never sent). There is no way to run commands, browse files or start background processes. The one extra is the extended display, which can only add an extra screen.
+9. **Screen and input only.** Viewers can see the screen, point, type, scroll and use the clipboard (secrets copied from password managers are never sent). There is no way to run commands, browse or read files, or start background processes. Two extras: the extended display, which can only add an extra screen, and sending a file, which can only add a new file to Downloads.
 10. **One viewer at a time.** Another device has to ask to take over.
 11. **Stop means stop.** Pressing Stop on the Mac ends the session and refuses reconnects for 2 minutes.
     - Changing the password, revoking a device or resetting passkeys ends live sessions immediately.

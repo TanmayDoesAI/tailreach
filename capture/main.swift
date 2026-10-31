@@ -336,6 +336,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
 final class Input {
     let src = CGEventSource(stateID: .hidSystemState)
     var down = [false, false, false]
+    var held = Set<CGKeyCode>() // keys pressed but not yet released
 
     var bounds: CGRect { CGDisplayBounds(shownDisplay) }
     var pos: CGPoint { CGEvent(source: nil)?.location ?? .zero }
@@ -377,9 +378,11 @@ final class Input {
         down[b] = isDown
     }
 
-    /// Lets go of any button still held (a viewer that left mid-drag).
+    /// Lets go of any button or key still held (a viewer that left mid-drag or mid-press).
     func releaseAll() {
         for b in 0..<3 where down[b] { button(b, down: false, clicks: 1, mods: []) }
+        for k in held { CGEvent(keyboardEventSource: src, virtualKey: k, keyDown: false)?.post(tap: .cghidEventTap) }
+        held.removeAll()
     }
 
     /// Scrolls like a real trackpad: continuous pixel deltas tagged with a gesture phase
@@ -400,24 +403,32 @@ final class Input {
         e.post(tap: .cghidEventTap)
     }
 
-    func key(_ name: String, mods: CGEventFlags) {
+    /// A key press, or with `down` just its press or its release (a key held on the viewer's
+    /// keyboard: games, hold-to-repeat). `rep` marks the viewer's own key repeats.
+    func key(_ name: String, mods: CGEventFlags, down: Bool? = nil, rep: Bool = false) {
         var flags = mods
         var code: CGKeyCode
+        var text: [UInt16]?
         if let c = Input.named[name] {
             code = c
             if Input.arrows.contains(name) { flags.formUnion([.maskNumericPad, .maskSecondaryFn]) }
         } else if name.count == 1, let (c, shift) = Input.keyFor(Character(name)) {
             code = c
             if shift { flags.insert(.maskShift) }
+            // A plain character keeps its text, so another layout on the Mac still types it.
+            if flags.isDisjoint(with: [.maskCommand, .maskControl, .maskAlternate]) { text = Array(name.utf16) }
         } else {
-            type(name)
+            if down != false { type(name) }
             return
         }
-        for d in [true, false] {
+        for d in down.map({ [$0] }) ?? [true, false] {
             let e = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: d)
             e?.flags = flags
+            if let text { e?.keyboardSetUnicodeString(stringLength: text.count, unicodeString: text) }
+            if rep { e?.setIntegerValueField(.keyboardEventAutorepeat, value: 1) }
             e?.post(tap: .cghidEventTap)
         }
+        if let down { if down { held.insert(code) } else { held.remove(code) } }
     }
 
     /// Types text. A character on a US key goes as that real key press (with Shift if it
@@ -566,7 +577,7 @@ func handle(_ c: [String: Any]) {
             input.button(b, down: false, clicks: n, mods: mods)
         }
     case "scroll": inputQ.async { input.scroll(num(c["dx"]), num(c["dy"]), phase: c["ph"] as? String, momentum: c["mo"] as? String) }
-    case "key": inputQ.async { input.key(c["k"] as? String ?? "", mods: mods) }
+    case "key": inputQ.async { input.key(c["k"] as? String ?? "", mods: mods, down: c["down"] as? Bool, rep: c["rep"] as? Bool ?? false) }
     case "text": inputQ.async { input.type(c["s"] as? String ?? "") }
     case "media": inputQ.async { input.media(c["k"] as? String ?? "") }
     case "clip-set": DispatchQueue.main.async { clipboard.set(c["s"] as? String ?? "") }

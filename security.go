@@ -414,6 +414,9 @@ func (a *app) control(req map[string]any) map[string]any {
 		if busy {
 			return map[string]any{"busy": true}
 		}
+		if ask { // files sent from the viewer go to Downloads, which macOS guards too
+			res["downloads"] = downloadsWritable()
+		}
 		return res
 	case "stopSessions":
 		stopAllSessions()

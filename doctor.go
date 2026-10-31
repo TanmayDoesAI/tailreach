@@ -122,6 +122,11 @@ func doctor(args []string) error {
 			} else {
 				d.fail("Accessibility not allowed: taps and typing won't reach the Mac", fmt.Sprintf(fix, "Accessibility"))
 			}
+			if b, ok := p["downloads"].(bool); ok && b {
+				d.ok("Downloads (files sent from the viewer)")
+			} else if ok {
+				d.warn("Can't save to Downloads: files sent from the viewer won't arrive", "System Settings → Privacy & Security → Files & Folders → mydevices: Downloads Folder")
+			}
 		}
 	}
 

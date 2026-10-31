@@ -187,6 +187,9 @@ func (a *app) viewer() http.Handler {
 		case "/stream":
 			a.relayStream(w, r)
 			return
+		case "/upload":
+			a.receiveFile(w, r)
+			return
 		case "/caps":
 			if a.fastAvailable() {
 				go warmHelper() // the viewer is about to connect: get capture ready

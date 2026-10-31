@@ -225,6 +225,7 @@ function dlog(...parts) {
 // Leaving says so at once (iOS may freeze the page before a WebSocket close gets out),
 // so the Mac's "Screen shared" panel goes away immediately rather than after a timeout.
 function leave() {
+  releaseKeys();
   send({ t: 'bye' });
   stopRTC(false);
   ws?.close();
@@ -1045,10 +1046,27 @@ document.addEventListener('keydown', (e) => {
   if (e.altKey) m.push('opt');
   if (e.ctrlKey) m.push('ctrl');
   if (e.shiftKey && (named || chord)) m.push('shift');
-  if (named) sendKey(named, m);
-  else if (chord) sendKey(e.altKey ? keyOf(e) : e.key.toLowerCase(), m);
-  else sendText(e.key);   // the Mac presses the real key (Shift+> included), so shortcuts work
+  // Held down on the Mac until it's let go here (games, hold-to-repeat). The Mac presses the
+  // real key, Shift+> included, so shortcuts work.
+  const k = named || (chord ? (e.altKey ? keyOf(e) : e.key.toLowerCase()) : e.key);
+  if (e.repeat && !heldKeys.has(e.code)) return;
+  const all = [...new Set([...mods(), ...m])];
+  heldKeys.set(e.code, { k, m: all });
+  send({ t: 'key', k, m: all, down: true, rep: e.repeat });
 });
+// Let go by key position: e.key can differ by then (Shift let go first: ">" comes up as ".").
+const heldKeys = new Map();
+document.addEventListener('keyup', (e) => {
+  const h = heldKeys.get(e.code);
+  if (!h) return;
+  heldKeys.delete(e.code);
+  send({ t: 'key', k: h.k, m: h.m, down: false });
+});
+function releaseKeys() {
+  for (const h of heldKeys.values()) send({ t: 'key', k: h.k, m: h.m, down: false });
+  heldKeys.clear();
+}
+addEventListener('blur', releaseKeys);   // a keyup that happens in another window never arrives
 
 // The key itself, for Option chords: e.key is then what Option makes (⌥E gives a dead key).
 const CODE_KEYS = {
@@ -1245,6 +1263,60 @@ function flash(msg) {
   onMacClipboard.t = setTimeout(() => $('#toast').classList.add('hidden'), 2500);
 }
 
+// ---------- files ----------
+// A file dropped on the screen (or picked in the panel) is saved in the Mac's Downloads.
+// Only that way round: the viewer can't read or open files on the Mac.
+async function sendFiles(files) {
+  for (const f of files) {
+    try {
+      const name = await upload(f);
+      flash(`Sent to the Mac's Downloads: ${name}`);
+    } catch (err) {
+      flash(`${f.name}: ${err.message}`);
+      return;
+    }
+  }
+}
+
+function upload(f) {
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open('POST', 'upload?name=' + encodeURIComponent(f.name));
+    x.upload.onprogress = (e) => {
+      if (!e.lengthComputable) return;
+      $('#toastText').textContent = `Sending ${f.name}… ${Math.round((e.loaded / e.total) * 100)}%`;
+      $('#toast').classList.remove('hidden');
+      clearTimeout(onMacClipboard.t);
+    };
+    x.onload = () => {
+      if (x.status === 200) resolve(JSON.parse(x.responseText).name);
+      else reject(new Error(x.responseText.trim() || `failed (${x.status})`));
+    };
+    x.onerror = () => reject(new Error('the connection dropped'));
+    x.send(f);
+  });
+}
+
+document.addEventListener('dragover', (e) => {
+  if (![...(e.dataTransfer?.types || [])].includes('Files')) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'copy';
+  document.body.classList.add('dropping');
+});
+document.addEventListener('dragleave', (e) => { if (!e.relatedTarget) document.body.classList.remove('dropping'); });
+document.addEventListener('drop', (e) => {
+  document.body.classList.remove('dropping');
+  if (!e.dataTransfer?.files?.length) return;
+  e.preventDefault();
+  sendFiles([...e.dataTransfer.files]);
+});
+$('#filePick').addEventListener('change', (e) => {
+  const files = [...e.target.files];
+  e.target.value = '';
+  openSheet(false);
+  sendFiles(files);
+});
+
 // ---------- orientation ----------
 // The stream is sized for the device's longer side, so rotating needs no reconnect: just re-fit.
 function fitMode(mode) {
@@ -1339,6 +1411,7 @@ const actions = {
   extendPanel: () => openExtend(true),
   extendClose: () => openExtend(false),
   extendGo: () => (extActive() ? stopExtend() : startExtend()),
+  sendFile: () => $('#filePick').click(),
 };
 
 // ---------- extended display ----------

@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -32,8 +33,13 @@ func main() {
 	secs := flag.Int("t", 6, "seconds to run")
 	nudge := flag.Bool("nudge", false, "move the Mac's cursor 40 points right and back, to check input works")
 	display := flag.Int("display", 0, "display ID to show (0 = main; the IDs are printed in the displays event)")
+	upload := flag.String("upload", "", "send this file to the Mac's Downloads instead, as a viewer would")
 	flag.Parse()
 	page, _ := url.Parse(flag.Arg(0))
+	if *upload != "" {
+		sendFile(page, *upload)
+		return
+	}
 	u := *page
 	u.Scheme = "wss"
 	u.Path += "stream"
@@ -164,6 +170,29 @@ func main() {
 			dcPongs.Load(), time.Duration(dcRTT.Load())*time.Microsecond, dcCursors.Load())
 		pc.Close()
 	}
+}
+
+func sendFile(page *url.URL, path string) {
+	f, err := os.Open(path)
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+	defer f.Close()
+	u := *page
+	u.Path += "upload"
+	u.RawQuery = url.Values{"name": {filepath.Base(path)}}.Encode()
+	req, _ := http.NewRequest("POST", u.String(), f)
+	req.Header.Set("Origin", "https://"+page.Host)
+	req.Header.Set("Cookie", testCookie())
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	fmt.Println(resp.Status, strings.TrimSpace(string(b)))
 }
 
 func testCookie() string {
