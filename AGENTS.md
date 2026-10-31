@@ -73,7 +73,7 @@ CGO_ENABLED=0 GOARCH=arm64 go vet .
 - **The Mac's Stop button must stick.** The stream closes with code 4001 and new streams are refused for 2 minutes.
 - **The "Screen shared" panel is shown while anyone views,** and is excluded from capture.
 - **The helper always ends its capture session before exiting.** It runs in its own process group, and stops are made by closing its stdin, never by killing it outright. Otherwise macOS can leave a stuck "Unknown — Screen Recording" indicator.
-- **No audio.**
+- **Sound only when the viewer switches it on** (⋯ → Sound, off by default). Only then does capture include audio (never the helper's own), and it goes over WebRTC only.
 
 ## Known gaps (from review; fix before advertising multi-computer use)
 

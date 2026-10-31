@@ -26,6 +26,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/pion/webrtc/v4"
+	"github.com/pion/webrtc/v4/pkg/media/oggwriter"
 )
 
 func main() {
@@ -34,6 +35,8 @@ func main() {
 	nudge := flag.Bool("nudge", false, "move the Mac's cursor 40 points right and back, to check input works")
 	display := flag.Int("display", 0, "display ID to show (0 = main; the IDs are printed in the displays event)")
 	useHEVC := flag.Bool("hevc", false, "ask for HEVC video instead of H.264")
+	useAudio := flag.Bool("audio", false, "ask for the Mac's sound too (with -rtc)")
+	audioOut := flag.String("audio-out", "", "with -audio: save the sound to this .ogg file")
 	upload := flag.String("upload", "", "send this file to the Mac's Downloads instead, as a viewer would")
 	flag.Parse()
 	page, _ := url.Parse(flag.Arg(0))
@@ -69,7 +72,7 @@ func main() {
 	if *useHEVC {
 		codec = "hevc"
 	}
-	send(map[string]any{"t": "start", "w": 2556, "h": 2556, "fps": 60, "maxbr": 20000000, "localCursor": true, "display": *display, "codec": codec})
+	send(map[string]any{"t": "start", "w": 2556, "h": 2556, "fps": 60, "maxbr": 20000000, "localCursor": true, "display": *display, "codec": codec, "audio": *useAudio})
 
 	send(map[string]any{"t": "diag"})
 	if *nudge {
@@ -89,8 +92,35 @@ func main() {
 	if *useRTC {
 		pc, _ = webrtc.NewPeerConnection(webrtc.Configuration{})
 		pc.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly})
+		if *useAudio {
+			pc.AddTransceiverFromKind(webrtc.RTPCodecTypeAudio, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly})
+		}
 		pc.OnTrack(func(t *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
 			fmt.Println("track:", t.Codec().MimeType, t.Codec().SDPFmtpLine)
+			if t.Kind() == webrtc.RTPCodecTypeAudio {
+				n, bytes := 0, 0
+				var ogg *oggwriter.OggWriter
+				if *audioOut != "" {
+					ogg, _ = oggwriter.New(*audioOut, 48000, 2)
+				}
+				defer func() {
+					if ogg != nil {
+						ogg.Close()
+					}
+					fmt.Printf("audio:     %d RTP packets, %.0f kbit/s\n", n, float64(bytes)*8/1000/time.Since(start).Seconds())
+				}()
+				for {
+					p, _, err := t.ReadRTP()
+					if err != nil {
+						return
+					}
+					n++
+					bytes += len(p.Payload)
+					if ogg != nil {
+						ogg.WriteRTP(p)
+					}
+				}
+			}
 			for {
 				p, _, err := t.ReadRTP()
 				if err != nil {
@@ -146,6 +176,11 @@ func main() {
 			json.Unmarshal(b, &ev)
 			switch ev["t"] {
 			case "rtc-answer":
+				for _, l := range strings.Split(ev["sdp"].(string), "\n") {
+					if strings.HasPrefix(l, "m=") || strings.HasPrefix(l, "a=rtpmap") {
+						fmt.Println("answer:", strings.TrimSpace(l))
+					}
+				}
 				pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeAnswer, SDP: ev["sdp"].(string)})
 			case "cursor":
 				if *nudge {

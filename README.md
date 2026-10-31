@@ -97,6 +97,7 @@ In both modes:
 - To hide the toolbar completely, tap the status pill at the top (ping · fps); tap the pill again to bring it back.
 - The full-screen button (desktop browsers, Android, iPad) sits next to **⋯**.
 - **Sharper text:** where the browser can play HEVC (recent Safari, Chrome and Edge), the Mac sends HEVC instead of H.264, which keeps text crisper at the same bitrate. When the screen stops moving, a few extra frames with more bits sharpen it further. **⋯ → Video → H.264** switches HEVC off.
+- **Sound:** off by default. Switch on **⋯ → Sound** to hear the Mac on this device (over WebRTC; the Mac keeps playing it too). If the browser held it back, tap the screen once.
 - **Sending files:** drop files anywhere on the screen, or use **⋯ → Send a file to the Mac**. They're saved in the Mac's Downloads; nothing is ever replaced, and the viewer can't read files on the Mac.
 - **More than one display:** pick which one to show in the **⋯** panel. It switches live, and taps, the pointer and the cursor follow it.
 
@@ -177,7 +178,7 @@ Tip: in the Tailscale admin console's access controls, you can also limit which 
 ## Known limitations
 
 - **Mac only, for the fast stream and the extended display.** Windows and Linux hosts work through VNC for now.
-- **No audio.** This is deliberate for now.
+- **Sound is one-way and WebRTC-only:** no microphone from the phone to the Mac, and no sound on the WebSocket fallback.
 - **Multi-computer setups behind a hub are less isolated than a single Mac:**
   - The hub forwards the browser's cookies to the devices behind it.
   - A device's own password isn't enforced when you reach it through the hub.

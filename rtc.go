@@ -16,6 +16,7 @@ import (
 	"github.com/pion/rtp"
 	"github.com/pion/rtp/codecs"
 	"github.com/pion/webrtc/v4"
+	"github.com/pion/webrtc/v4/pkg/media"
 )
 
 // WebRTC video: the same hardware H.264, but carried the way AirPlay and FaceTime carry
@@ -60,6 +61,7 @@ func (a *app) iceMux() (ice.UDPMux, error) {
 type rtcSession struct {
 	pc        *webrtc.PeerConnection
 	track     *webrtc.TrackLocalStaticRTP
+	sound     *webrtc.TrackLocalStaticSample // the Mac's sound, only if the viewer turned it on
 	connected atomic.Bool
 	sentBytes atomic.Int64
 	sentTotal atomic.Int64 // never reset: the rate controller reads its own deltas
@@ -89,9 +91,10 @@ type rtcSession struct {
 const keyframeEvery = 300 * time.Millisecond
 
 // newRTC answers the browser's offer, with HEVC video if hevc (the viewer asked for it,
-// having checked it can decode it), else H.264. onKeyframe is called when the browser asks
-// for one; onInput for each command arriving on a data channel, with a way to answer on it.
-func (a *app) newRTC(offer string, hevc bool, onKeyframe, onConnected, onFailed func(),
+// having checked it can decode it), else H.264, and Opus sound if sound. onKeyframe is
+// called when the browser asks for one; onInput for each command arriving on a data
+// channel, with a way to answer on it.
+func (a *app) newRTC(offer string, hevc, sound bool, onKeyframe, onConnected, onFailed func(),
 	onInput func(msg []byte, reply func([]byte))) (*rtcSession, string, error) {
 	mux, err := a.iceMux()
 	if err != nil {
@@ -114,6 +117,13 @@ func (a *app) newRTC(offer string, hevc bool, onKeyframe, onConnected, onFailed 
 			RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: mime, ClockRate: 90000, RTCPFeedback: feedback, SDPFmtpLine: fmtp},
 			PayloadType:        pt,
 		}, webrtc.RTPCodecTypeVideo); err != nil {
+			return nil, "", err
+		}
+	}
+
+	opus := webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2, SDPFmtpLine: "minptime=10;useinbandfec=1;stereo=1"}
+	if sound {
+		if err := m.RegisterCodec(webrtc.RTPCodecParameters{RTPCodecCapability: opus, PayloadType: 111}, webrtc.RTPCodecTypeAudio); err != nil {
 			return nil, "", err
 		}
 	}
@@ -152,6 +162,15 @@ func (a *app) newRTC(offer string, hevc bool, onKeyframe, onConnected, onFailed 
 	if err != nil {
 		pc.Close()
 		return nil, "", err
+	}
+	if sound {
+		if s.sound, err = webrtc.NewTrackLocalStaticSample(opus, "sound", "mydevices"); err == nil {
+			_, err = pc.AddTrack(s.sound)
+		}
+		if err != nil {
+			pc.Close()
+			return nil, "", err
+		}
 	}
 	// SSRC and payload type are filled in per connection by the track.
 	var payloader rtp.Payloader = &codecs.H264Payloader{}
@@ -311,6 +330,15 @@ func (s *rtcSession) writeFrame(msg []byte) error {
 		}
 	}
 	return nil
+}
+
+// writeAudio takes a helper audio message ([4][u64 µs][Opus packet], 20 ms) and sends it.
+func (s *rtcSession) writeAudio(msg []byte) {
+	if s.sound == nil || len(msg) < 10 {
+		return
+	}
+	s.sound.WriteSample(media.Sample{Data: msg[9:], Duration: 20 * time.Millisecond})
+	s.sentBytes.Add(int64(len(msg) - 9))
 }
 
 // sendMove sends a message the newest copy of which is all that matters (a cursor report)

@@ -32,6 +32,7 @@ const settings = {
   barAt: store.get('barAt', null),       // where the toolbar floats: its centre as fractions of the screen; null = bottom centre
   barMini: store.get('barMini', false),  // folded down to just its grip
   codec: store.get('codec', 'auto'),     // 'auto' = HEVC when this browser can play it, else H.264
+  audio: store.get('audio', false),      // the Mac's sound: off unless switched on (WebRTC only)
 };
 document.body.classList.toggle('bar-mini', settings.barMini);
 
@@ -153,7 +154,7 @@ function sendStart() {
   const side = Math.min(p.maxSide, Math.round(Math.max(screen.width, screen.height) * devicePixelRatio));
   // rtcFirst: no WebSocket video while WebRTC connects. Over a relay (just after a
   // network switch) it would run seconds behind; the last frame waits instead.
-  send({ t: 'start', w: side, h: side, fps: extShown() ? settings.extHz : +settings.fps, maxbr: p.maxbr, localCursor: true, display: settings.display, rtcFirst: rtcWanted(), codec: hevc ? 'hevc' : 'h264' });
+  send({ t: 'start', w: side, h: side, fps: extShown() ? settings.extHz : +settings.fps, maxbr: p.maxbr, localCursor: true, display: settings.display, rtcFirst: rtcWanted(), codec: hevc ? 'hevc' : 'h264', audio: settings.audio && rtcWanted() });
 }
 
 // Another device has the Mac. Ask, instead of kicking it (which makes the two fight).
@@ -346,6 +347,7 @@ async function startRTC(keepPicture = false) {
   try {
     pc = new RTCPeerConnection({ iceServers: [] });   // tailnet only: no STUN/TURN
     const tr = pc.addTransceiver('video', { direction: 'recvonly' });
+    if (settings.audio) pc.addTransceiver('audio', { direction: 'recvonly' });
     inputDC = pc.createDataChannel('input');
     moveDC = pc.createDataChannel('move', { ordered: false, maxRetransmits: 0 });
     for (const dc of [inputDC, moveDC]) dc.onmessage = (e) => onEvent(JSON.parse(e.data));   // pongs, cursor reports
@@ -355,6 +357,7 @@ async function startRTC(keepPicture = false) {
       if (codecs.length) tr.setCodecPreferences(codecs);
     } catch {}
     pc.ontrack = (e) => {
+      if (e.track.kind === 'audio') { sound.srcObject = new MediaStream([e.track]); playSound(); return; }
       try { e.receiver.jitterBufferTarget = 0; } catch {}   // show frames as soon as they're decodable
       try { e.receiver.playoutDelayHint = 0; } catch {}
       video.srcObject = new MediaStream([e.track]);
@@ -426,6 +429,14 @@ function stopRTC(tellServer, keepPicture = false) {
   video.srcObject = null;
   document.body.classList.remove('rtc');
 }
+
+// The Mac's sound, when switched on. Browsers only start sound from a tap, so the switch's
+// own tap starts it, and any later tap restarts it if the browser paused it.
+const sound = new Audio();
+sound.autoplay = true;
+sound.setAttribute('playsinline', '');
+function playSound() { if (settings.audio && sound.srcObject) sound.play().catch(() => {}); }
+document.addEventListener('pointerdown', () => { if (sound.paused) playSound(); }, true);
 
 // Browsers without requestVideoFrameCallback: detect the first frame and count frames by polling.
 function watchVideo() {
@@ -1602,6 +1613,14 @@ $('#speed').value = settings.speed;
 $('#natural').checked = settings.natural;
 $('#speed').addEventListener('input', (e) => { settings.speed = +e.target.value; store.set('speed', settings.speed); });
 $('#natural').addEventListener('change', (e) => { settings.natural = e.target.checked; store.set('natural', settings.natural); });
+$('#sound').checked = settings.audio;
+$('#sound').addEventListener('change', (e) => {
+  settings.audio = e.target.checked;
+  store.set('audio', settings.audio);
+  if (settings.audio) sound.play().catch(() => {});   // inside this tap, so the browser allows sound later
+  else sound.srcObject = null;
+  ws?.close();   // reconnect with sound on or off
+});
 
 setMode(settings.mode);
 boot();

@@ -13,6 +13,7 @@ ScreenCaptureKit → VideoToolbox H.264 or HEVC (helper, Swift)
 - **Capture** runs at the resolution the viewing screen actually shows. Nothing is sent while the screen is still. When motion stops, the last frame is re-encoded four times at 2.5× the bitrate (the link is idle then), so text sharpens up.
 - **Codec:** HEVC when the viewer says it can play it both over WebRTC and with WebCodecs (it checks before connecting), otherwise H.264. It's fixed for the session; ⋯ → Video → H.264 forces H.264.
 - **WebRTC** carries the video as UDP over the tailnet, with a minimal jitter buffer on the phone (`jitterBufferTarget = 0`).
+- **Sound** (only when the viewer switches it on): ScreenCaptureKit's audio, encoded to Opus in 20 ms packets by AudioToolbox, on its own WebRTC track. None on the WebSocket fallback.
 - **Fallback:** if WebRTC can't connect, the same H.264 goes over the WebSocket and is decoded with WebCodecs.
 
 ## Rate control

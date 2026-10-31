@@ -9,9 +9,11 @@
 //             type 1 = decoder config: [u16 json length][json {codec,w,h}][avcC or hvcC]
 //             type 2 = video:          [u8 keyframe][u64 timestamp µs][length-prefixed NAL units]
 //             type 3 = event (json):   {"t":"started"|"error"|"cursor"|"displays",...}
+//             type 4 = audio:          [u64 timestamp µs][one 20 ms Opus packet] (only if the viewer asked)
 //   stdin:   one JSON command per line (see `handle(_:)`)
 import AppKit
 import ApplicationServices
+import AVFoundation
 import SwiftUI
 import CoreMedia
 import Foundation
@@ -186,11 +188,92 @@ final class Encoder {
     }
 }
 
+// MARK: - Audio (the Mac's sound as Opus, only when the viewer turns it on)
+
+/// Collects the captured sound into 20 ms blocks and encodes each as one Opus packet,
+/// which is what WebRTC carries.
+final class AudioEncoder {
+    static let rate = 48_000.0
+    static let block: AVAudioFrameCount = 960 // 20 ms
+    private let pcm = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: rate, channels: 2, interleaved: false)!
+    private var opus: AVAudioFormat
+    private let conv: AVAudioConverter?
+    private let pending: AVAudioPCMBuffer
+    private var pendingAt: UInt64 = 0 // µs of the first sample in `pending`
+
+    init() {
+        var asbd = AudioStreamBasicDescription(mSampleRate: AudioEncoder.rate, mFormatID: kAudioFormatOpus, mFormatFlags: 0,
+                                               mBytesPerPacket: 0, mFramesPerPacket: UInt32(AudioEncoder.block), mBytesPerFrame: 0,
+                                               mChannelsPerFrame: 2, mBitsPerChannel: 0, mReserved: 0)
+        opus = AVAudioFormat(streamDescription: &asbd)!
+        conv = AVAudioConverter(from: pcm, to: opus)
+        conv?.bitRate = 96_000
+        pending = AVAudioPCMBuffer(pcmFormat: pcm, frameCapacity: AudioEncoder.block)!
+    }
+
+    func add(_ sb: CMSampleBuffer) {
+        guard let fd = sb.formatDescription, let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(fd),
+              let fmt = AVAudioFormat(streamDescription: asbd),
+              fmt.commonFormat == .pcmFormatFloat32, !fmt.isInterleaved, fmt.sampleRate == AudioEncoder.rate else {
+            dlog("audio: unexpected format \(String(describing: sb.formatDescription))")
+            return
+        }
+        let n = AVAudioFrameCount(sb.numSamples)
+        guard n > 0, let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: n) else { return }
+        buf.frameLength = n // sizes the buffer list the copy fills
+        let st = CMSampleBufferCopyPCMDataIntoAudioBufferList(sb, at: 0, frameCount: Int32(n), into: buf.mutableAudioBufferList)
+        guard st == noErr, let src = buf.floatChannelData, let dst = pending.floatChannelData else {
+            dlog("audio: copy failed (\(st)), \(fmt)")
+            return
+        }
+        var at = UInt64(max(0, sb.presentationTimeStamp.seconds * 1_000_000))
+        var off: AVAudioFrameCount = 0
+        while off < n {
+            if pending.frameLength == 0 { pendingAt = at }
+            let take = min(n - off, AudioEncoder.block - pending.frameLength)
+            for c in 0..<2 {
+                let from = src[min(c, Int(fmt.channelCount) - 1)] + Int(off) // mono: the same in both ears
+                (dst[c] + Int(pending.frameLength)).update(from: from, count: Int(take))
+            }
+            pending.frameLength += take
+            off += take
+            at += UInt64(Double(take) / AudioEncoder.rate * 1_000_000)
+            if pending.frameLength == AudioEncoder.block {
+                encode()
+                pending.frameLength = 0
+            }
+        }
+    }
+
+    private func encode() {
+        guard let conv else { return }
+        let out = AVAudioCompressedBuffer(format: opus, packetCapacity: 1, maximumPacketSize: max(conv.maximumOutputPacketSize, 1500))
+        var fed = false
+        var err: NSError?
+        _ = conv.convert(to: out, error: &err) { _, status in
+            if fed { status.pointee = .noDataNow; return nil }
+            fed = true
+            status.pointee = .haveData
+            return self.pending
+        }
+        guard err == nil, out.packetCount > 0, out.byteLength > 0 else {
+            dlog("audio: encode gave nothing (\(String(describing: err)))")
+            return
+        }
+        var p = Data(capacity: 8 + Int(out.byteLength))
+        withUnsafeBytes(of: pendingAt.bigEndian) { p.append(contentsOf: $0) }
+        p.append(Data(bytes: out.data, count: Int(out.byteLength)))
+        emit(4, p)
+    }
+}
+
 // MARK: - Capture (ScreenCaptureKit)
 
 final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     let q = DispatchQueue(label: "capture", qos: .userInteractive)
+    let audioQ = DispatchQueue(label: "audio", qos: .userInteractive)
     let enc = Encoder()
+    private var audio: AudioEncoder?
     private var stream: SCStream?
     private var lastPB: CVPixelBuffer?
     private var lastFrameAt = Date()
@@ -198,7 +281,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     private var timer: DispatchSourceTimer?
     private var params: [Int] = []
     private var startedEvent: [String: Any] = [:]
-    private var wanted: (Int, Int, Int, Bool, CGDirectDisplayID, Bool)? // what the viewer asked for, for automatic retries
+    private var wanted: (Int, Int, Int, Bool, CGDirectDisplayID, Bool, Bool)? // what the viewer asked for, for automatic retries
     private var retries = 0
 
     /// macOS's capture service sometimes drops a session (it's busy, or the Mac is hot).
@@ -214,15 +297,15 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         log("capture interrupted (\(why)); retry \(retries) in \(delay)s")
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
             guard viewing else { return }
-            Task { self.stream = nil; self.params = []; await self.start(maxW: w.0, maxH: w.1, fps: w.2, cursor: w.3, display: w.4, hevc: w.5) }
+            Task { self.stream = nil; self.params = []; await self.start(maxW: w.0, maxH: w.1, fps: w.2, cursor: w.3, display: w.4, hevc: w.5, sound: w.6) }
         }
     }
 
     /// display 0 means the main display. One that's gone (unplugged) falls back to it too.
-    func start(maxW: Int, maxH: Int, fps: Int, cursor: Bool, display: CGDirectDisplayID, hevc: Bool) async {
+    func start(maxW: Int, maxH: Int, fps: Int, cursor: Bool, display: CGDirectDisplayID, hevc: Bool, sound: Bool) async {
         // Same settings and still running (a viewer coming back): just send a fresh keyframe.
-        wanted = (maxW, maxH, fps, cursor, display, hevc)
-        let p = [maxW, maxH, fps, cursor ? 1 : 0, Int(display), hevc ? 1 : 0]
+        wanted = (maxW, maxH, fps, cursor, display, hevc, sound)
+        let p = [maxW, maxH, fps, cursor ? 1 : 0, Int(display), hevc ? 1 : 0, sound ? 1 : 0]
         if stream != nil, p == params {
             dlog("start: same settings, still capturing: fresh keyframe only")
             resendConfig()
@@ -258,7 +341,13 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
             cfg.colorMatrix = CGDisplayStream.yCbCrMatrix_ITU_R_709_2
             cfg.queueDepth = 5
             cfg.showsCursor = cursor // false when the viewer draws the cursor itself (feels instant)
-            cfg.capturesAudio = false // video only: no sound is captured or sent
+            // Sound only when the viewer turned it on (off by default). Never this helper's own.
+            cfg.capturesAudio = sound
+            if sound {
+                cfg.sampleRate = Int(AudioEncoder.rate)
+                cfg.channelCount = 2
+                cfg.excludesCurrentProcessAudio = true
+            }
 
             if let old = stream { try? await old.stopCapture() }
             q.sync {
@@ -269,6 +358,8 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
             }
             let s = SCStream(filter: filter, configuration: cfg, delegate: self)
             try s.addStreamOutput(self, type: .screen, sampleHandlerQueue: q)
+            audio = sound ? AudioEncoder() : nil
+            if sound { try s.addStreamOutput(self, type: .audio, sampleHandlerQueue: audioQ) }
             try await s.startCapture()
             stream = s
             params = p
@@ -299,6 +390,10 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sb: CMSampleBuffer, of type: SCStreamOutputType) {
+        if type == .audio {
+            if sb.isValid { audio?.add(sb) }
+            return
+        }
         guard type == .screen, sb.isValid,
               let info = (CMSampleBufferGetSampleAttachmentsArray(sb, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]])?.first,
               let raw = info[.status] as? Int, SCFrameStatus(rawValue: raw) == .complete,
@@ -563,7 +658,8 @@ func handle(_ c: [String: Any]) {
                 sendDisplays()
             }
             await capture.start(maxW: max(320, w), maxH: max(240, h), fps: (10...120).contains(fps) ? fps : 60,
-                                cursor: !localCursor, display: display, hevc: c["codec"] as? String == "hevc")
+                                cursor: !localCursor, display: display, hevc: c["codec"] as? String == "hevc",
+                                sound: c["audio"] as? Bool ?? false)
         }
     case "stop":
         inputQ.async { input.releaseAll() }
