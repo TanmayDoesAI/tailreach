@@ -6,7 +6,7 @@ This note is for anyone changing the video path. It explains what the code in `s
 
 ```
 ScreenCaptureKit → VideoToolbox H.264 or HEVC (helper, Swift)
-      → stdout frames → mydevices (Go)
+      → stdout frames → tailreach (Go)
       → WebRTC over the tailnet (pion) → Safari's hardware decoder → <video>
 ```
 

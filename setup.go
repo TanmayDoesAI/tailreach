@@ -12,7 +12,7 @@ import (
 	"strings"
 )
 
-// `mydevices setup` does on an installed copy (Homebrew's, say) what `make setup` does in a
+// `tailreach setup` does on an installed copy (Homebrew's, say) what `make setup` does in a
 // checkout: the signing identity, both binaries signed with it, the login item, then
 // doctor. Safe to run again, and needed again after `brew upgrade`: Homebrew builds
 // without access to the keychain, so its copies come ad-hoc signed, and macOS would
@@ -23,7 +23,7 @@ var signingIdentityScript string
 
 func setup(args []string) error {
 	if runtime.GOOS != "darwin" {
-		return fmt.Errorf("setup is macOS-only; elsewhere run mydevices from your init system")
+		return fmt.Errorf("setup is macOS-only; elsewhere run tailreach from your init system")
 	}
 	exe, err := os.Executable()
 	if err != nil {
@@ -33,21 +33,24 @@ func setup(args []string) error {
 
 	if out, err := exec.Command("sh", "-c", signingIdentityScript).CombinedOutput(); err != nil {
 		return fmt.Errorf("couldn't make the signing identity (%v): %s\n"+
-			"If macOS asked for your login keychain password, run `mydevices setup` again and allow it.", err, strings.TrimSpace(string(out)))
+			"If macOS asked for your login keychain password, run `tailreach setup` again and allow it.", err, strings.TrimSpace(string(out)))
 	} else {
 		fmt.Print(string(out))
 	}
-	for _, b := range []struct{ path, id string }{{exe, "com.mydevices.agent"}, {helperPath(), "com.mydevices.capture"}} {
+	for _, b := range []struct{ path, id string }{{exe, "com.tailreach.agent"}, {helperPath(), "com.tailreach.capture"}} {
 		if err := resign(b.path, b.id); err != nil {
 			return fmt.Errorf("signing %s: %v", filepath.Base(b.path), err)
 		}
 	}
-	fmt.Println("✓ signed with \"mydevices local\", so macOS keeps the permissions you grant")
+	fmt.Println("✓ signed with \"tailreach local\", so macOS keeps the permissions you grant")
 
 	// An existing login item keeps its flags; one that runs this copy is just restarted.
 	var was []string
-	if out, err := exec.Command("plutil", "-extract", "ProgramArguments", "json", "-o", "-", plistPath()).Output(); err == nil {
-		json.Unmarshal(out, &was)
+	for _, p := range []string{plistPath(), oldPlistPath()} { // an install from before the rename keeps its flags too
+		if out, err := exec.Command("plutil", "-extract", "ProgramArguments", "json", "-o", "-", p).Output(); err == nil {
+			json.Unmarshal(out, &was)
+			break
+		}
 	}
 	if len(args) == 0 && len(was) > 0 {
 		if was[0] == launchPath(exe) {
@@ -73,7 +76,7 @@ func resign(path, id string) error {
 	if out, err := exec.Command("cp", "-p", path, tmp).CombinedOutput(); err != nil {
 		return fmt.Errorf("%v: %s", err, out)
 	}
-	if out, err := exec.Command("codesign", "--force", "-s", "mydevices local", "--identifier", id, tmp).CombinedOutput(); err != nil {
+	if out, err := exec.Command("codesign", "--force", "-s", "tailreach local", "--identifier", id, tmp).CombinedOutput(); err != nil {
 		os.Remove(tmp)
 		return fmt.Errorf("%v: %s", err, out)
 	}

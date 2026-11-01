@@ -3,7 +3,7 @@
     python3 tools/phonetest/analyze.py [path-to-viewer-stats.jsonl]
 """
 import json,sys,os,statistics as st,datetime as dt
-F=sys.argv[1] if len(sys.argv)>1 else os.path.expanduser('~/Library/Application Support/mydevices/viewer-stats.jsonl')
+F=sys.argv[1] if len(sys.argv)>1 else os.path.expanduser('~/Library/Application Support/tailreach/viewer-stats.jsonl')
 rows=[json.loads(l) for l in open(F)]
 ph=[r for r in rows if r['src']=='phone']; mac=[r for r in rows if r['src']=='mac']
 def macat(ts):

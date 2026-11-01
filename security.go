@@ -26,7 +26,7 @@ import (
 // Device password: every viewing device (phone, tablet, other computer) enters it
 // once, then is trusted for 30 days. Trust is bound to that device's Tailscale node,
 // so a copied cookie is useless anywhere else. Managed from the Mac's own settings
-// window (`mydevices settings`), never over the network.
+// window (`tailreach settings`), never over the network.
 
 const (
 	trustCookie   = "md_trust"
@@ -402,9 +402,9 @@ func (a *app) control(req map[string]any) map[string]any {
 		path := a.startViewerRec(int(secs))
 		a.audit("viewer-stats", "this Mac", fmt.Sprintf("%ds", int(secs)))
 		return map[string]any{"path": path, "secs": int(secs)}
-	case "diag": // for `mydevices doctor`: what macOS allows the capture helper
+	case "diag": // for `tailreach doctor`: what macOS allows the capture helper
 		if !a.fastAvailable() {
-			return map[string]any{"error": "no capture helper next to mydevices"}
+			return map[string]any{"error": "no capture helper next to tailreach"}
 		}
 		ask, _ := req["ask"].(bool)
 		res, busy, err := helperDiag(ask)

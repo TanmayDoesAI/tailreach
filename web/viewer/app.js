@@ -1,4 +1,4 @@
-// Mac Remote — fast viewer.
+// tailreach — the viewer.
 // Hardware H.264 from the Mac → WebRTC <video> (or WebSocket → WebCodecs → <canvas>).
 // Touch, mouse and keyboard go back as small JSON messages, on WebRTC data channels
 // when they're open and the WebSocket otherwise.
@@ -82,7 +82,7 @@ async function boot() {
     caps = await (await fetch('caps', { cache: 'no-store' })).json();
     $('#macUser').textContent = caps.user;
     $('#macUserField').value = caps.user;
-    document.title = `${caps.name} — Mac Remote`;
+    document.title = `${caps.name} · tailreach`;
     if (!caps.fast) { location.replace('classic/'); return; }
   } catch {
     setState('off', 'Can’t reach this device.');
@@ -522,12 +522,12 @@ function onEvent(ev) {
     case 'error':
       if (locked) break;   // capture pauses while the Mac is locked; that's expected
       setState('off', ev.needsPermission
-        ? 'Allow Screen Recording for mydevices-capture on the Mac (System Settings → Privacy & Security).'
+        ? 'Allow Screen Recording for tailreach-capture on the Mac (System Settings → Privacy & Security).'
         : `Mac: ${ev.msg}`);
       break;
     case 'warn':
       // Input blocked on the Mac: say so instead of letting the local cursor pretend.
-      $('#toastText').textContent = 'Mac is blocking input. Allow mydevices-capture in Privacy & Security → Accessibility.';
+      $('#toastText').textContent = 'Mac is blocking input. Allow tailreach-capture in Privacy & Security → Accessibility.';
       $('#toast').classList.remove('hidden');
       clearTimeout(onMacClipboard.t);
       break;

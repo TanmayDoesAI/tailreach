@@ -1,6 +1,6 @@
 // pattern — an animated test-pattern window for benchmarking the screen stream.
 //
-//   swiftc -O tools/pattern/main.swift -o /tmp/mydevices-pattern && /tmp/mydevices-pattern [seconds]
+//   swiftc -O tools/pattern/main.swift -o /tmp/tailreach-pattern && /tmp/tailreach-pattern [seconds]
 //
 // It puts a borderless, non-activating, always-visible window on the main display that
 // redraws continuously: moving bars (so ScreenCaptureKit emits frames without pause),

@@ -68,7 +68,7 @@ type authState struct {
 
 func newAuth(host, stateDir, owner string) (*authState, error) {
 	wa, err := webauthn.New(&webauthn.Config{
-		RPDisplayName: "mydevices",
+		RPDisplayName: "tailreach",
 		RPID:          host,
 		RPOrigins:     []string{"https://" + host},
 	})

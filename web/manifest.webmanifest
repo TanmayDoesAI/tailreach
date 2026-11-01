@@ -1,6 +1,6 @@
 {
-  "name": "My Devices",
-  "short_name": "Devices",
+  "name": "tailreach",
+  "short_name": "tailreach",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

@@ -26,7 +26,7 @@ import (
 // capture helper already lists every display and streams the one the viewer picks, so all
 // this adds is creating and removing the display.
 //
-// The display lives in a small CHILD PROCESS (`mydevices vdisplay`, below), because the
+// The display lives in a small CHILD PROCESS (`tailreach vdisplay`, below), because the
 // API behind it is private: if a macOS update changes it, the crash is in the child, not
 // in the login item that all remote access goes through. The child runs in the GUI session
 // (it is started by the login item, which creating a display needs), and ends when its
@@ -196,7 +196,7 @@ func startChildLocked(w, h uint32, hz float64) (uint32, error) {
 			return 0, fmt.Errorf("%s", r.Error)
 		}
 		// The child ended without a word: it crashed inside the macOS display API. Keep the
-		// feature off (the rest of mydevices is unaffected) until the file is deleted.
+		// feature off (the rest of tailreach is unaffected) until the file is deleted.
 		os.MkdirAll(defaultStateDir(), 0o700)
 		os.WriteFile(vdFile("vdisplay.disabled"), []byte(time.Now().Format(time.RFC3339)+"\n"), 0o600)
 		log.Printf("extended display: the display process crashed; feature turned off")
@@ -276,7 +276,7 @@ func extMaxBitrate(hz float64) int64 {
 	return 16_000_000
 }
 
-// ---------- the child: `mydevices vdisplay -w W -h H -hz HZ` ----------
+// ---------- the child: `tailreach vdisplay -w W -h H -hz HZ` ----------
 
 func vdFile(name string) string { return filepath.Join(defaultStateDir(), name) }
 
@@ -310,7 +310,7 @@ func vdisplayChild(args []string) int {
 	restorePlace(d.ID())
 	out.Encode(map[string]any{"id": d.ID()})
 	// Note where it is every few seconds (and last thing), so a move is kept even if
-	// mydevices is restarted while it's open.
+	// tailreach is restarted while it's open.
 	stop := make(chan struct{})
 	go func() {
 		for t := time.NewTicker(5 * time.Second); ; {

@@ -2,8 +2,8 @@
 
 A step-by-step setup that a person, or a coding agent working for them, can follow on **their own** Mac and Tailscale account. Each step says what to run, how to check it worked, and which parts only the human can do.
 
-> The binary and its folders are still named `mydevices`. Renaming them would make macOS
-> forget the permissions already granted on existing installs, so the name stays.
+> Earlier versions were called `mydevices`. `make setup` moves such an install over, keeping its
+> Tailscale login, password and passkeys; macOS asks for its two permissions once more.
 
 ## What you end up with
 
@@ -19,18 +19,18 @@ make setup          # signing identity, build, login item, then a check of every
 ```
 
 With Homebrew instead of a clone: `brew install tanmaydoesai/tailreach/tailreach`, then
-`mydevices setup` (it does what `make setup` does, for
-the installed copy; run it again after every upgrade). Use `mydevices` wherever this guide
-says `./mydevices`.
+`tailreach setup` (it does what `make setup` does, for
+the installed copy; run it again after every upgrade). Use `tailreach` wherever this guide
+says `./tailreach`.
 
 `make setup` does every step that doesn't need you, and is safe to run again. It ends with
-`./mydevices doctor`, which lists what's left with the exact fix for each:
+`./tailreach doctor`, which lists what's left with the exact fix for each:
 
 - approving the Tailscale sign-in (it opens the link);
 - choosing a device password;
 - switching on two permissions.
 
-Run `./mydevices doctor` again after each fix, until it says **All good** or **Working**. It
+Run `./tailreach doctor` again after each fix, until it says **All good** or **Working**. It
 exits with status 1 while something still needs fixing.
 
 The numbered steps below are the same thing done by hand, with the reasoning.
@@ -38,12 +38,12 @@ The numbered steps below are the same thing done by hand, with the reasoning.
 ## Rules for agents
 
 - **Never type, choose or store a password.** The device password is set by the human with
-  `./mydevices password` in their own terminal (suggest `! ./mydevices password` in Claude Code), or in the settings window.
+  `./tailreach password` in their own terminal (suggest `! ./tailreach password` in Claude Code), or in the settings window.
 - **Never toggle macOS privacy settings** for the human. Tell them exactly where to click and wait for them to confirm.
 - **Never complete the Tailscale sign-in for them.** Open the link and let them approve it.
 - Don't publish the human's tailnet name (`tailXXXXXX.ts.net`), Tailscale IPs, device names or e-mail anywhere: in commits, issues or docs.
 - If a check fails twice, stop and report what you saw instead of improvising.
-- `./mydevices doctor` is the source of truth for what's done. Run it first, and after every step.
+- `./tailreach doctor` is the source of truth for what's done. Run it first, and after every step.
 
 ## 0. Requirements
 
@@ -71,7 +71,7 @@ macOS ties Screen Recording and Accessibility permissions to the app's code sign
 sh scripts/signing-identity.sh
 ```
 
-Check: prints `✓ created 'mydevices local'` or `✓ ... already exists`.
+Check: prints `✓ created 'tailreach local'` or `✓ ... already exists`.
 If `codesign` later asks for a **keychain password**, that's the human's **Mac login password**. They type it into the macOS prompt themselves.
 
 ## 3. Build
@@ -80,11 +80,11 @@ If `codesign` later asks for a **keychain password**, that's the human's **Mac l
 make local
 ```
 
-Check: `./mydevices version` prints a version, and `ls mydevices-capture` exists.
+Check: `./tailreach version` prints a version, and `ls tailreach-capture` exists.
 
 > Go builds with `CGO_ENABLED=0` (set in the Makefile). On Apple silicon, use the Apple silicon
 > Go (`go env GOARCH` says `arm64`). An Intel Go builds an Intel binary, which works but runs
-> through Rosetta and costs more CPU while streaming; `./mydevices doctor` warns about it.
+> through Rosetta and costs more CPU while streaming; `./tailreach doctor` warns about it.
 
 ## 4. Turn on Screen Sharing (needed for unlocking the lock screen)
 
@@ -94,7 +94,7 @@ Check: `nc -z 127.0.0.1 5900 && echo ok`.
 ## 5. First run: join the tailnet
 
 ```sh
-./mydevices --hub --name mac
+./tailreach --hub --name mac
 ```
 
 - First time only, it prints a **Tailscale login link** and opens it. The human approves it with **their** Tailscale account.
@@ -109,29 +109,29 @@ If `devices` is already taken in their tailnet, use e.g. `--hub-name screens`.
 ## 6. Set the device password (human)
 
 ```sh
-./mydevices password
+./tailreach password
 ```
 
 This is a password **they choose** for this remote access, entered once every 30 days per phone or tablet. It's not the Mac login password. Use at least 8 characters.
-They can also do it in the settings window: `./mydevices settings`.
+They can also do it in the settings window: `./tailreach settings`.
 
 ## 7. Start at login
 
 ```sh
-./mydevices install --hub --name mac
+./tailreach install --hub --name mac
 ```
 
-Check: `launchctl print gui/$(id -u)/com.mydevices.agent | grep state` shows `running`.
-The log is at `~/Library/Application Support/mydevices/mydevices.log`.
+Check: `launchctl print gui/$(id -u)/com.tailreach.agent | grep state` shows `running`.
+The log is at `~/Library/Application Support/tailreach/tailreach.log`.
 
 ## 8. Grant permissions (human)
 
 Open the Mac's page once from the phone (step 9) so macOS registers the app, then go to:
 
-- **System Settings → Privacy & Security → Screen Recording**: enable `mydevices`.
-- **System Settings → Privacy & Security → Accessibility**: enable `mydevices`. In newer macOS this list may be called *Device Control and Data Access*. If it isn't listed, press **+** and add the `mydevices` binary from the repo folder.
+- **System Settings → Privacy & Security → Screen Recording**: enable `tailreach`.
+- **System Settings → Privacy & Security → Accessibility**: enable `tailreach`. In newer macOS this list may be called *Device Control and Data Access*. If it isn't listed, press **+** and add the `tailreach` binary from the repo folder.
 
-If `mydevices` isn't in a list, `./mydevices doctor --ask` puts it there (macOS may show a prompt). Then switch it on.
+If `tailreach` isn't in a list, `./tailreach doctor --ask` puts it there (macOS may show a prompt). Then switch it on.
 
 Then restart the service: `make reload`.
 
@@ -147,7 +147,7 @@ If you're unsure about an entry, remove it with **−**, add it back with **+**,
 ## 10. Verify (agent can do this)
 
 ```sh
-./mydevices doctor
+./tailreach doctor
 ```
 
 Every line should be ✓. Then check a real stream end to end:
@@ -172,7 +172,7 @@ This mints a short test session over the local control socket. Expect `webrtc: N
 On another Mac, do steps 1–4 and 8, then:
 
 ```sh
-./mydevices install --name mac2    # reachable only through the hub, at /mac2/
+./tailreach install --name mac2    # reachable only through the hub, at /mac2/
 ```
 
 Multi-computer setups are less hardened than a single hub; see "Known gaps" in `AGENTS.md`.
@@ -180,8 +180,8 @@ Multi-computer setups are less hardened than a single hub; see "Known gaps" in `
 ## Uninstall
 
 ```sh
-./mydevices uninstall
-rm -rf ~/Library/Application\ Support/mydevices   # forgets the Tailscale node, passwords, passkeys
+./tailreach uninstall
+rm -rf ~/Library/Application\ Support/tailreach   # forgets the Tailscale node, passwords, passkeys
 ```
 
 Then remove the `devices` machine in the Tailscale admin console, and the permission entries in System Settings.

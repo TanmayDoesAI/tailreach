@@ -8,12 +8,12 @@ import (
 
 func TestLogScans(t *testing.T) {
 	dir := t.TempDir()
-	log := filepath.Join(dir, "mydevices.log")
+	log := filepath.Join(dir, "tailreach.log")
 	for _, c := range []struct{ log, err, link string }{
 		{"10:00:00 → Sign in to Tailscale to add this device: https://login.tailscale.com/a/x\n", "", "https://login.tailscale.com/a/x"},
 		{"10:00:00 ✓ Signed in as a on b\n", "", ""},
-		{"10:00:00 ✓ Signed in as a on b\nmydevices: couldn't determine which Tailscale user owns this device\n", "couldn't determine which Tailscale user owns this device", ""},
-		{"mydevices: old failure\n10:00:00 ✓ Signed in as a on b\n", "", ""},
+		{"10:00:00 ✓ Signed in as a on b\ntailreach: couldn't determine which Tailscale user owns this device\n", "couldn't determine which Tailscale user owns this device", ""},
+		{"tailreach: old failure\n10:00:00 ✓ Signed in as a on b\n", "", ""},
 	} {
 		os.WriteFile(log, []byte(c.log), 0o600)
 		if got := lastError(log); got != c.err {

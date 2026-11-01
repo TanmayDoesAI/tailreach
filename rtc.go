@@ -153,7 +153,7 @@ func (a *app) newRTC(offer string, hevc, sound bool, onKeyframe, onConnected, on
 		return nil, "", err
 	}
 	s.pc = pc
-	s.track, err = webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{MimeType: mime, ClockRate: 90000}, "screen", "mydevices")
+	s.track, err = webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{MimeType: mime, ClockRate: 90000}, "screen", "tailreach")
 	if err != nil {
 		pc.Close()
 		return nil, "", err
@@ -164,7 +164,7 @@ func (a *app) newRTC(offer string, hevc, sound bool, onKeyframe, onConnected, on
 		return nil, "", err
 	}
 	if sound {
-		if s.sound, err = webrtc.NewTrackLocalStaticSample(opus, "sound", "mydevices"); err == nil {
+		if s.sound, err = webrtc.NewTrackLocalStaticSample(opus, "sound", "tailreach"); err == nil {
 			_, err = pc.AddTrack(s.sound)
 		}
 		if err != nil {

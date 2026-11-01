@@ -9,17 +9,17 @@ import (
 	"strings"
 )
 
-const launchLabel = "com.mydevices.agent"
+const launchLabel = "com.tailreach.agent"
 
 func plistPath() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, "Library", "LaunchAgents", launchLabel+".plist")
 }
 
-// install registers mydevices to start at login (macOS LaunchAgent) with the given flags.
+// install registers tailreach to start at login (macOS LaunchAgent) with the given flags.
 func install(args []string) error {
 	if runtime.GOOS != "darwin" {
-		return fmt.Errorf("install is macOS-only for now; run mydevices from your init system instead")
+		return fmt.Errorf("install is macOS-only for now; run tailreach from your init system instead")
 	}
 	exe, err := os.Executable()
 	if err != nil {
@@ -27,7 +27,9 @@ func install(args []string) error {
 	}
 	exe, _ = filepath.EvalSymlinks(exe)
 	exe = launchPath(exe)
-	logFile := filepath.Join(defaultStateDir(), "mydevices.log")
+	retireOldLoginItem()
+	migrateState()
+	logFile := filepath.Join(defaultStateDir(), "tailreach.log")
 	os.MkdirAll(filepath.Dir(logFile), 0o700)
 
 	var argXML strings.Builder
@@ -59,7 +61,7 @@ func install(args []string) error {
 	if out, err := exec.Command("launchctl", "bootstrap", domain, plistPath()).CombinedOutput(); err != nil {
 		return fmt.Errorf("launchctl: %v: %s", err, out)
 	}
-	fmt.Println("✓ mydevices will now start at login. Logs:", logFile)
+	fmt.Println("✓ tailreach will now start at login. Logs:", logFile)
 	return nil
 }
 

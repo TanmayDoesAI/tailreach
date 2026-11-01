@@ -2,9 +2,9 @@
 // rate, bitrate and keyframes, over the WebSocket or (with -rtc) over WebRTC. With -rtc
 // it also opens the input data channels and reports round trips and cursor reports on them.
 //
-//	go run ./tools/streamtest [-rtc] https://mydevices.<tailnet>.ts.net/mac/
+//	go run ./tools/streamtest [-rtc] https://tailreach.<tailnet>.ts.net/mac/
 //
-// It gets a short test session from the running mydevices over its local settings socket.
+// It gets a short test session from the running tailreach over its local settings socket.
 package main
 
 import (
@@ -237,7 +237,7 @@ func sendFile(page *url.URL, path string) {
 
 func testCookie() string {
 	dir, _ := os.UserConfigDir()
-	conn, err := net.Dial("unix", filepath.Join(dir, "mydevices", "control.sock"))
+	conn, err := net.Dial("unix", filepath.Join(dir, "tailreach", "control.sock"))
 	if err != nil {
 		return ""
 	}

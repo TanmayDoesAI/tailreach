@@ -1,10 +1,10 @@
 dist/
 .DS_Store
 *.log
-/mydevices
+/tailreach
 
 # Compiled binaries at repo root
-/mydevices-capture
+/tailreach-capture
 
 # Runtime state / secrets
 security.json
@@ -20,3 +20,5 @@ tailscaled.*
 *.p12
 *.pfx
 .env
+/mydevices
+/mydevices-capture

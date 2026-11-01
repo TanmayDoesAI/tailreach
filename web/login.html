@@ -6,11 +6,11 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="Devices">
+  <meta name="apple-mobile-web-app-title" content="tailreach">
   <meta name="theme-color" content="#000000">
   <link rel="apple-touch-icon" href="/icons/icon-180.png">
   <link rel="manifest" href="/manifest.webmanifest">
-  <title>Sign in</title>
+  <title>Sign in · tailreach</title>
   <style>
     :root {
       --bg: #000; --fill: rgba(120,120,128,.16); --text: #f5f5f7; --text-2: rgba(235,235,245,.6);
@@ -25,8 +25,7 @@
       -webkit-font-smoothing: antialiased;
     }
     main { width: min(340px, 100%); display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; }
-    .glyph { color: var(--text-2); margin-bottom: 12px; }
-    .glyph svg { width: 34px; height: 34px; }
+    .app { width: 64px; height: 64px; border-radius: 15px; margin-bottom: 14px; box-shadow: 0 0 0 .5px rgba(255,255,255,.12); }
     h1 { margin: 0; font-size: 28px; font-weight: 700; letter-spacing: -.02em; }
     #who { margin: 0 0 28px; font-size: 15px; color: var(--text-2); }
     section, form { width: 100%; display: flex; flex-direction: column; gap: 10px; }
@@ -49,8 +48,8 @@
 </head>
 <body>
 <main>
-  <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8.5 10.5V7.5a3.5 3.5 0 0 1 7 0v3"/></svg></span>
-  <h1>Devices</h1>
+  <img class="app" src="/icons/icon-180.png" alt="">
+  <h1>tailreach</h1>
   <p id="who">&nbsp;</p>
 
   <!-- Device password: once every 30 days per device -->

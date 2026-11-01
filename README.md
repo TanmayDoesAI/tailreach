@@ -54,18 +54,18 @@ make setup
 
 ```sh
 brew install tanmaydoesai/tailreach/tailreach
-mydevices setup
+tailreach setup
 ```
 
-Run `mydevices setup` again after each `brew upgrade tailreach`: Homebrew can't use your keychain while it builds, so `setup` is what signs the new copy and keeps macOS's permissions in place.
+Run `tailreach setup` again after each `brew upgrade tailreach`: Homebrew can't use your keychain while it builds, so `setup` is what signs the new copy and keeps macOS's permissions in place.
 
-There are no downloads: tailreach is built from source on your own Mac, and `make setup` (or `mydevices setup`) handles the rest. It builds tailreach, signs it with a local identity (so macOS remembers its permissions), and makes it start at login. It finishes with `mydevices doctor`, which checks everything and tells you what's left, with the exact fix for each:
+There are no downloads: tailreach is built from source on your own Mac, and `make setup` (or `tailreach setup`) handles the rest. It builds tailreach, signs it with a local identity (so macOS remembers its permissions), and makes it start at login. It finishes with `tailreach doctor`, which checks everything and tells you what's left, with the exact fix for each:
 
 - approving the Tailscale sign-in;
 - choosing a device password;
 - switching on Screen Recording and Accessibility.
 
-Fix those, run `./mydevices doctor` again until it's happy, then open the link it prints on your phone. In Safari, **Share → Add to Home Screen** gives it an app icon and full screen.
+Fix those, run `./tailreach doctor` again until it's happy, then open the link it prints on your phone. In Safari, **Share → Add to Home Screen** gives it an app icon and full screen.
 
 **With a coding agent** (Claude Code, Codex, Cursor…), open it in the cloned folder and say:
 
@@ -73,7 +73,7 @@ Fix those, run `./mydevices doctor` again until it's happy, then open the link i
 
 The agent reads `AGENTS.md` and `SETUP.md`. They tell it never to set your passwords or privacy settings, and never to approve the sign-in for you. The step-by-step version for people is in [`SETUP.md`](SETUP.md) too.
 
-> The program is called `mydevices` on disk (binary, login item, settings folder). Renaming it would reset the macOS permissions of existing installs.
+> Installed an earlier version, when it was called `mydevices`? `tailreach setup` (or `make setup`) moves it over: your Tailscale login, password and passkeys stay. macOS asks for Screen Recording and Accessibility once more.
 
 **More computers:** on each one, clone the repo and run:
 
@@ -82,9 +82,9 @@ make setup FLAGS='--name mac2'              # shown at /mac2/ on the first Mac's
 make setup FLAGS='--name mac2 --via ""'     # or on its own, with its own sign-in
 ```
 
-With Homebrew, it's `mydevices setup --name mac2` (or `mydevices setup --name mac2 --via ""`).
+With Homebrew, it's `tailreach setup --name mac2` (or `tailreach setup --name mac2 --via ""`).
 
-`./mydevices uninstall` removes the login item.
+`./tailreach uninstall` removes the login item.
 
 ## Using it
 
@@ -132,10 +132,10 @@ Use a laptop's, tablet's or phone's browser as a second monitor for the Mac. Ope
  phone / tablet / laptop browser
         │  HTTPS with a Tailscale certificate, tailnet only
         ▼
- mydevices --hub        joins your tailnet as "devices"
+ tailreach --hub        joins your tailnet as "devices"
         │  /mac/ → this Mac        /mac2/ → forwarded over the tailnet
         ▼                               ▼
- mydevices-capture                 mydevices --name mac2
+ tailreach-capture                 tailreach --name mac2
  (ScreenCaptureKit + VideoToolbox)
 ```
 
@@ -158,7 +158,7 @@ Every request has to pass all of these layers:
 3. **Device password (set on the Mac).** Each phone, tablet or computer enters it once, then is trusted for 30 days.
    - Trust is tied to that device's Tailscale identity, so a copied cookie doesn't work anywhere else.
    - Five wrong tries lock it for 15 minutes and notify the Mac.
-   - Set or reset it in the settings window (`./mydevices settings`) or from a terminal (`./mydevices password`; add `--off` to turn it off).
+   - Set or reset it in the settings window (`./tailreach settings`) or from a terminal (`./tailreach password`; add `--off` to turn it off).
 4. **Sign-in.** Use the device password, or a passkey (Face ID, Touch ID, Windows Hello) as a shortcut.
    - The device password alone signs you in, so a passkey problem never locks you out. Each device is offered its own passkey once, and **Not now** skips it.
    - **Sign out of this device** (in **⋯**, or on the device list) ends the session and forgets the device, so the password is asked again.
@@ -168,31 +168,31 @@ Every request has to pass all of these layers:
 6. **Origin checks.** Only pages from your tailnet can open screen sockets, and sign-in requests must come from the hub's own origin.
 7. **You see every session.** A **"Screen shared" panel** sits at the top right of the Mac while someone is connected. It shows who and for how long, and has a **Stop** button. The panel is left out of the stream.
    - macOS also shows its screen-recording indicator, and notifications cover new passkeys and trusted devices.
-   - Everything is written to `~/Library/Application Support/mydevices/audit.log`.
-8. **Settings only on the Mac.** The settings window talks to mydevices over a Unix socket that only your macOS user can open. Nothing about settings is reachable over the network.
+   - Everything is written to `~/Library/Application Support/tailreach/audit.log`.
+8. **Settings only on the Mac.** The settings window talks to tailreach over a Unix socket that only your macOS user can open. Nothing about settings is reachable over the network.
 9. **Screen and input only.** Viewers can see the screen, point, type, scroll and use the clipboard (secrets copied from password managers are never sent). There is no way to run commands, browse or read files, or start background processes. Two extras: the extended display, which can only add an extra screen, and sending a file, which can only add a new file to Downloads.
 10. **One viewer at a time.** Another device has to ask to take over.
 11. **Stop means stop.** Pressing Stop on the Mac ends the session and refuses reconnects for 2 minutes.
     - Changing the password, revoking a device or resetting passkeys ends live sessions immediately.
 
-**Permissions (first run on each Mac):** System Settings → Privacy & Security. Allow **Screen Recording** and **Accessibility** for `mydevices`.
+**Permissions (first run on each Mac):** System Settings → Privacy & Security. Allow **Screen Recording** and **Accessibility** for `tailreach`.
 
-Tip: in the Tailscale admin console's access controls, you can also limit which of your devices may reach `mydevices`.
+Tip: in the Tailscale admin console's access controls, you can also limit which of your devices may reach `tailreach`.
 
 ## Lock screen, sleep and restarts
 
 - **Locked Mac:** your phone shows "Mac is locked". Type the Mac password and it's entered on the real lock screen through the Mac's own Screen Sharing. The fast stream then resumes. Screen Sharing must be on.
   - macOS locks the Mac again as soon as a Screen Sharing session that unlocked it ends. So that connection stays open, idle, while you're viewing, and closes a minute after you leave (or at once when Stop is pressed on the Mac). The Mac then locks itself again.
 - **Sleep:** turn on *Keep this Mac reachable while plugged in* in settings. The display still sleeps, but the Mac stays online.
-- **Restart:** with FileVault on, the Mac waits at the disk-unlock screen before anything starts, so no remote tool can reach it. Someone has to type the password there once. After that, mydevices starts on its own if it's installed with `./mydevices install …`. For restarts you plan, `sudo fdesetup authrestart` skips that screen once.
+- **Restart:** with FileVault on, the Mac waits at the disk-unlock screen before anything starts, so no remote tool can reach it. Someone has to type the password there once. After that, tailreach starts on its own if it's installed with `./tailreach install …`. For restarts you plan, `sudo fdesetup authrestart` skips that screen once.
 
 ## If something goes wrong
 
-Run `mydevices doctor` (`./mydevices doctor` in a clone). It checks every step and prints the exact fix for whatever isn't right, including the Tailscale sign-in, a phone that isn't on your tailnet yet, macOS permissions and the error from the log if tailreach stopped.
+Run `tailreach doctor` (`./tailreach doctor` in a clone). It checks every step and prints the exact fix for whatever isn't right, including the Tailscale sign-in, a phone that isn't on your tailnet yet, macOS permissions and the error from the log if tailreach stopped.
 
 - **The link doesn't open on your phone:** the phone isn't on your tailnet. Open the Tailscale app on it and sign in with the same account as the Mac.
 - **Still stuck:** let a coding agent finish it with you. Clone the repo, open it in Claude Code, Codex or Cursor, and say: *"Set up tailreach on this Mac by following SETUP.md. Stop and tell me whenever I need to do something myself."* `AGENTS.md` and `SETUP.md` tell it what it may and may not do for you.
-- **A bug:** [open an issue](https://github.com/TanmayDoesAI/tailreach/issues) with what `mydevices doctor` printed (it never prints your password, but take out your tailnet name and e-mail before posting).
+- **A bug:** [open an issue](https://github.com/TanmayDoesAI/tailreach/issues) with what `tailreach doctor` printed (it never prints your password, but take out your tailnet name and e-mail before posting).
 
 ## Known limitations
 
@@ -231,8 +231,8 @@ go run . --hub --name mac --web-dir ./web   # then just refresh the browser
 Build:
 
 ```sh
-make local      # this Mac: mydevices + mydevices-capture
-make            # → dist/mydevices-{darwin-arm64,darwin-amd64,linux-amd64,linux-arm64,windows-amd64.exe}
+make local      # this Mac: tailreach + tailreach-capture
+make            # → dist/tailreach-{darwin-arm64,darwin-amd64,linux-amd64,linux-arm64,windows-amd64.exe}
 ```
 
 On Linux or Windows, point `--vnc` at any VNC server (e.g. `--vnc 127.0.0.1:5901`).
@@ -241,7 +241,7 @@ On Linux or Windows, point `--vnc` at any VNC server (e.g. `--vnc 127.0.0.1:5901
 
 - **What it logs:** stream setup, every WebRTC state change and the network path it took (direct or relayed), rate changes, keyframe requests, the capture helper's settings, and why a request was refused.
 - **The viewer logs too,** into the same file, so a phone can be debugged without Safari's inspector.
-- **Where:** debug lines are marked `·` in `~/Library/Application Support/mydevices/mydevices.log` (`tail -f` it).
+- **Where:** debug lines are marked `·` in `~/Library/Application Support/tailreach/tailreach.log` (`tail -f` it).
 - **Cost:** a normal build doesn't contain any of it (Go build tag, Swift `-D DEBUG_LOG`). Either way, nothing runs while nobody is viewing: the capture helper exits a minute after the last viewer leaves.
 
 `AGENTS.md` lists the rules the code must keep: what a viewer may and may not do, how the capture helper stops, and so on. Read it before changing anything security-related.

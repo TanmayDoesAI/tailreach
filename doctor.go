@@ -16,23 +16,23 @@ import (
 )
 
 // doctor checks a setup end to end and says, for anything wrong, exactly what to do.
-// It changes nothing, except that --ask lets macOS list mydevices in both Privacy panes.
+// It changes nothing, except that --ask lets macOS list tailreach in both Privacy panes.
 // Exit status 1 means something needs fixing, so scripts and coding agents can rely on it.
 func doctor(args []string) error {
 	fs := flag.NewFlagSet("doctor", flag.ExitOnError)
-	state := fs.String("state", defaultStateDir(), "state directory of the running mydevices")
-	ask := fs.Bool("ask", false, "put mydevices in the Screen Recording and Accessibility lists (macOS may show its prompt)")
+	state := fs.String("state", defaultStateDir(), "state directory of the running tailreach")
+	ask := fs.Bool("ask", false, "put tailreach in the Screen Recording and Accessibility lists (macOS may show its prompt)")
 	fs.Parse(args)
 
 	d := &checkup{}
-	fmt.Printf("tailreach doctor (mydevices %s)\n\n", version)
+	fmt.Printf("tailreach doctor (%s)\n\n", version)
 	exe, _ := os.Executable()
 	exe, _ = filepath.EvalSymlinks(exe)
 	mac := runtime.GOOS == "darwin"
 	// The fixes name the commands for this kind of install: a Homebrew copy or a checkout.
-	me, restart, rebuild := "./mydevices", "`make reload`", "`make local && make reload`"
+	me, restart, rebuild := "./tailreach", "`make reload`", "`make local && make reload`"
 	if launchPath(exe) != exe {
-		me, restart, rebuild = "mydevices", "`mydevices setup`", "`mydevices setup`"
+		me, restart, rebuild = "tailreach", "`tailreach setup`", "`tailreach setup`"
 	}
 
 	if mac {
@@ -45,23 +45,23 @@ func doctor(args []string) error {
 		}
 		if out, _ := exec.Command("sysctl", "-n", "hw.optional.arm64").Output(); strings.TrimSpace(string(out)) == "1" && runtime.GOARCH == "amd64" {
 			d.warn("Built for Intel, so it runs through Rosetta and uses more CPU while streaming",
-				"`make reload` (it builds for this Mac's CPU), or `mydevices setup` for a Homebrew copy")
+				"`make reload` (it builds for this Mac's CPU), or `tailreach setup` for a Homebrew copy")
 		} else {
 			d.ok("Native build (%s)", runtime.GOARCH)
 		}
-		if exec.Command("security", "find-certificate", "-c", "mydevices local").Run() == nil {
-			d.ok("Signing identity \"mydevices local\"")
+		if exec.Command("security", "find-certificate", "-c", "tailreach local").Run() == nil {
+			d.ok("Signing identity \"tailreach local\"")
 		} else {
-			d.fail("No signing identity \"mydevices local\": permissions would reset on every build", setupFix(exe, "sh scripts/signing-identity.sh, then `make reload`"))
+			d.fail("No signing identity \"tailreach local\": permissions would reset on every build", setupFix(exe, "sh scripts/signing-identity.sh, then `make reload`"))
 		}
-		for _, b := range []struct{ path, id string }{{exe, "com.mydevices.agent"}, {helperPath(), "com.mydevices.capture"}} {
+		for _, b := range []struct{ path, id string }{{exe, "com.tailreach.agent"}, {helperPath(), "com.tailreach.capture"}} {
 			name := filepath.Base(b.path)
 			out, err := exec.Command("codesign", "-dv", "--verbose=2", b.path).CombinedOutput()
 			switch {
 			case err != nil && strings.Contains(string(out), "No such file"):
 				d.fail(name+" is missing", setupFix(exe, "`make local`")+" (Homebrew: `brew reinstall tailreach`)")
-			case !strings.Contains(string(out), "Authority=mydevices local") || !strings.Contains(string(out), "Identifier="+b.id):
-				d.fail(name+" isn't signed with \"mydevices local\"", setupFix(exe, "make local (after sh scripts/signing-identity.sh)"))
+			case !strings.Contains(string(out), "Authority=tailreach local") || !strings.Contains(string(out), "Identifier="+b.id):
+				d.fail(name+" isn't signed with \"tailreach local\"", setupFix(exe, "make local (after sh scripts/signing-identity.sh)"))
 			default:
 				d.ok("%s signed", name)
 			}
@@ -69,7 +69,7 @@ func doctor(args []string) error {
 		d.loginItem(exe, me, restart)
 	}
 
-	d.section("mydevices")
+	d.section("tailreach")
 	st, err := controlCall(*state, map[string]any{"op": "status"})
 	for wait := time.Now().Add(20 * time.Second); err != nil && d.running && signInLink(*state) == "" && time.Now().Before(wait); {
 		if !d.said {
@@ -80,20 +80,20 @@ func doctor(args []string) error {
 		st, err = controlCall(*state, map[string]any{"op": "status"})
 	}
 	if err != nil {
-		log := filepath.Join(*state, "mydevices.log")
+		log := filepath.Join(*state, "tailreach.log")
 		switch url := signInLink(*state); {
 		case url != "":
 			d.fail("Waiting for Tailscale sign-in", "open "+url+" and approve it. No Tailscale account? That page makes one, free.\n"+
 				"        Then install the Tailscale app on your phone and sign in with the same account.")
 		case lastError(log) != "":
-			d.fail("mydevices stopped with an error: "+lastError(log), "fix that, then "+restart+". The whole log: "+log)
+			d.fail("tailreach stopped with an error: "+lastError(log), "fix that, then "+restart+". The whole log: "+log)
 		default:
-			d.fail("mydevices isn't running", setupFix(exe, "`./mydevices install --hub --name mac` (or `make setup`)")+"; its log: "+log)
+			d.fail("tailreach isn't running", setupFix(exe, "`./tailreach install --hub --name mac` (or `make setup`)")+"; its log: "+log)
 		}
 		return d.done()
 	}
 	if v, _ := st["version"].(string); v != "" && v != version {
-		d.warn(fmt.Sprintf("The running mydevices is %s, this one is %s", v, version), restart)
+		d.warn(fmt.Sprintf("The running tailreach is %s, this one is %s", v, version), restart)
 	}
 	if b, _ := st["debug"].(bool); b {
 		d.warn("Debug logging is on (a DEBUG=1 build)", "`make reload` for a normal build")
@@ -105,7 +105,7 @@ func doctor(args []string) error {
 		d.fail("HTTPS certificates are off for this tailnet: browsers can't connect", "turn on MagicDNS and HTTPS Certificates at https://login.tailscale.com/admin/dns, then "+restart)
 	}
 	switch n, ok := st["ownDevices"].(float64); {
-	case !ok: // an older mydevices that doesn't say
+	case !ok: // an older tailreach that doesn't say
 	case n == 0:
 		d.fail("No other device of yours is on this tailnet: nothing can view this Mac yet",
 			"install the Tailscale app on your phone, tablet or laptop and sign in with "+fmt.Sprint(st["owner"]))
@@ -136,7 +136,7 @@ func doctor(args []string) error {
 		case p["busy"] == true:
 			fmt.Println("  – Not checked: someone is viewing right now. Run it again when nobody is.")
 		default:
-			fix := "System Settings → Privacy & Security → %s: switch on mydevices, then " + restart + ". Not listed? `" + me + " doctor --ask`"
+			fix := "System Settings → Privacy & Security → %s: switch on tailreach, then " + restart + ". Not listed? `" + me + " doctor --ask`"
 			if b, _ := p["screen"].(bool); b {
 				d.ok("Screen Recording")
 			} else {
@@ -150,7 +150,7 @@ func doctor(args []string) error {
 			if b, ok := p["downloads"].(bool); ok && b {
 				d.ok("Downloads (files sent from the viewer)")
 			} else if ok {
-				d.warn("Can't save to Downloads: files sent from the viewer won't arrive", "System Settings → Privacy & Security → Files & Folders → mydevices: Downloads Folder")
+				d.warn("Can't save to Downloads: files sent from the viewer won't arrive", "System Settings → Privacy & Security → Files & Folders → tailreach: Downloads Folder")
 			}
 		}
 	}
@@ -163,10 +163,10 @@ func doctor(args []string) error {
 	return d.done()
 }
 
-// setupFix is the fix for a Homebrew copy (`mydevices setup`), or else the one for a checkout.
+// setupFix is the fix for a Homebrew copy (`tailreach setup`), or else the one for a checkout.
 func setupFix(exe, checkout string) string {
 	if launchPath(exe) != exe {
-		return "mydevices setup"
+		return "tailreach setup"
 	}
 	return checkout
 }
@@ -175,11 +175,11 @@ func setupFix(exe, checkout string) string {
 func (d *checkup) loginItem(exe, me, restart string) {
 	out, err := exec.Command("plutil", "-extract", "ProgramArguments.0", "raw", "-o", "-", plistPath()).Output()
 	if err != nil {
-		d.fail("Doesn't start at login", setupFix(exe, "`./mydevices install --hub --name mac` (or `make setup`)"))
+		d.fail("Doesn't start at login", setupFix(exe, "`./tailreach install --hub --name mac` (or `make setup`)"))
 		return
 	}
 	if got := strings.TrimSpace(string(out)); got != launchPath(exe) {
-		d.warn("The login item runs "+got+", not this copy", setupFix(exe, "run `./mydevices install …` from the copy you want, with the same flags"))
+		d.warn("The login item runs "+got+", not this copy", setupFix(exe, "run `./tailreach install …` from the copy you want, with the same flags"))
 	}
 	// Just after a rebuild, launchd waits a few seconds before starting it again.
 	running := func() bool {
@@ -200,7 +200,7 @@ func (d *checkup) loginItem(exe, me, restart string) {
 
 // signInLink finds the Tailscale sign-in link a first run is waiting on, in the log.
 func signInLink(stateDir string) string {
-	b, err := os.ReadFile(filepath.Join(stateDir, "mydevices.log"))
+	b, err := os.ReadFile(filepath.Join(stateDir, "tailreach.log"))
 	if err != nil {
 		return ""
 	}
@@ -218,7 +218,7 @@ func signInLink(stateDir string) string {
 
 func atoi(s string) int { n, _ := strconv.Atoi(s); return n }
 
-// lastError is the error a failed start left at the end of the log ("mydevices: …"),
+// lastError is the error a failed start left at the end of the log ("tailreach: …"),
 // unless it started fine after that.
 func lastError(logPath string) string {
 	b, err := os.ReadFile(logPath)
@@ -230,7 +230,7 @@ func lastError(logPath string) string {
 		if strings.Contains(lines[i], "✓ Signed in as") {
 			return ""
 		}
-		if e, ok := strings.CutPrefix(lines[i], "mydevices: "); ok {
+		if e, ok := strings.CutPrefix(lines[i], "tailreach: "); ok {
 			return e
 		}
 	}

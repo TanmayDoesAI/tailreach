@@ -752,7 +752,7 @@ func (b *bench) blackoutSummary() *blackoutReport {
 	return r
 }
 
-// testCookie gets a short test session from the running mydevices (same as
+// testCookie gets a short test session from the running tailreach (same as
 // streamtest), waiting out a just-restarted control socket.
 func testCookie() string {
 	dir, _ := os.UserConfigDir()
@@ -766,7 +766,7 @@ func testCookie() string {
 }
 
 func requestTestCookie(dir string) string {
-	conn, err := net.Dial("unix", filepath.Join(dir, "mydevices", "control.sock"))
+	conn, err := net.Dial("unix", filepath.Join(dir, "tailreach", "control.sock"))
 	if err != nil {
 		return ""
 	}

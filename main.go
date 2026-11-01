@@ -1,4 +1,4 @@
-// mydevices — reach your own computers' screens from any browser on your tailnet.
+// tailreach — reach your own computers' screens from any browser on your tailnet.
 //
 // Every machine runs this binary. It joins your tailnet as its own device (via
 // tsnet, so no separate Tailscale setup is needed) and relays the browser's
@@ -34,7 +34,7 @@ import (
 	"tailscale.com/tsnet"
 )
 
-const version = "0.1.1"
+const version = "0.2.0"
 
 //go:embed all:web
 var embedded embed.FS
@@ -59,7 +59,7 @@ func main() {
 		switch os.Args[1] {
 		case "setup":
 			if err := setup(os.Args[2:]); err != nil {
-				fmt.Fprintln(os.Stderr, "mydevices:", err)
+				fmt.Fprintln(os.Stderr, "tailreach:", err)
 				stuckHelp()
 				os.Exit(1)
 			}
@@ -112,12 +112,13 @@ func main() {
 }
 
 func run(o options) error {
+	migrateState()
 	retireHelperOnExit()
 	hostname := o.name
 	stateName := o.name
 	if o.hub {
 		hostname = sanitizeName(o.hubName)
-		stateName = "mydevices" // the hub's state dir keeps its name, so renaming the hub keeps its Tailscale login
+		stateName = "tailreach" // not the hub's name, so renaming the hub keeps its Tailscale login
 		o.via = ""
 	}
 	o.via = sanitizeName(o.via)
@@ -180,7 +181,7 @@ func run(o options) error {
 	}
 	a.sec = newSecurity(filepath.Join(o.stateDir, stateName))
 	if runtime.GOOS == "darwin" && os.Getppid() != 1 {
-		log.Printf("ℹ Running from a terminal: during sessions macOS will show that terminal app as sharing the screen. For everyday use run `mydevices install` instead.")
+		log.Printf("ℹ Running from a terminal: during sessions macOS will show that terminal app as sharing the screen. For everyday use run `tailreach install` instead.")
 	}
 	a.sec.applyKeepAwake()
 	go a.serveControl()
@@ -255,17 +256,17 @@ func watchLogin(ctx context.Context, lc *local.Client) {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, `mydevices %s — your screens, from any browser on your tailnet
+	fmt.Fprintf(os.Stderr, `tailreach %s — your screens, from any browser on your tailnet
 
 Usage:
-  mydevices [flags]              run on this machine (prints a login link the first time)
-  mydevices --hub [flags]        also serve the dashboard at https://devices.<tailnet>.ts.net/
-  mydevices setup [flags]        set up an installed copy (Homebrew): sign it, login item, doctor
-  mydevices install [flags]      start automatically at login (macOS), same flags as above
-  mydevices uninstall            stop and remove the login item
-  mydevices settings             open the settings window on this Mac (password, trusted devices, sessions)
-  mydevices password             set or reset the device password from a terminal (--off turns it off)
-  mydevices doctor               check the setup and say how to fix what isn't right
+  tailreach [flags]              run on this machine (prints a login link the first time)
+  tailreach --hub [flags]        also serve the dashboard at https://devices.<tailnet>.ts.net/
+  tailreach setup [flags]        set up an installed copy (Homebrew): sign it, login item, doctor
+  tailreach install [flags]      start automatically at login (macOS), same flags as above
+  tailreach uninstall            stop and remove the login item
+  tailreach settings             open the settings window on this Mac (password, trusted devices, sessions)
+  tailreach password             set or reset the device password from a terminal (--off turns it off)
+  tailreach doctor               check the setup and say how to fix what isn't right
 
 Flags:
 `, version)
@@ -293,7 +294,7 @@ func defaultStateDir() string {
 	if err != nil {
 		d = os.TempDir()
 	}
-	return filepath.Join(d, "mydevices")
+	return filepath.Join(d, "tailreach")
 }
 
 func openBrowser(url string) {
@@ -314,29 +315,29 @@ func writeJSON(w http.ResponseWriter, v any) {
 
 func exitOn(err error) {
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "mydevices:", err)
+		fmt.Fprintln(os.Stderr, "tailreach:", err)
 		os.Exit(1)
 	}
 }
 
-// openSettings opens the native settings window, talking to the running mydevices over its local socket.
+// openSettings opens the native settings window, talking to the running tailreach over its local socket.
 func openSettings(args []string) error {
 	fs := flag.NewFlagSet("settings", flag.ExitOnError)
-	state := fs.String("state", defaultStateDir(), "state directory of the running mydevices")
+	state := fs.String("state", defaultStateDir(), "state directory of the running tailreach")
 	fs.Parse(args)
 	sock := controlSocketPath(*state)
 	if _, err := os.Stat(sock); err != nil {
-		return fmt.Errorf("mydevices isn't running (no %s)", sock)
+		return fmt.Errorf("tailreach isn't running (no %s)", sock)
 	}
 	cmd := exec.Command(helperPath(), "--settings", sock)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	return cmd.Run()
 }
 
-// passwordCmd sets, resets or turns off the device password via the running mydevices.
+// passwordCmd sets, resets or turns off the device password via the running tailreach.
 func passwordCmd(args []string) error {
 	fs := flag.NewFlagSet("password", flag.ExitOnError)
-	state := fs.String("state", defaultStateDir(), "state directory of the running mydevices")
+	state := fs.String("state", defaultStateDir(), "state directory of the running tailreach")
 	off := fs.Bool("off", false, "turn the password off")
 	fs.Parse(args)
 	req := map[string]any{"op": "enablePassword", "enabled": false}
@@ -357,7 +358,7 @@ func passwordCmd(args []string) error {
 	}
 	c, err := net.Dial("unix", controlSocketPath(*state))
 	if err != nil {
-		return fmt.Errorf("mydevices isn't running: %v", err)
+		return fmt.Errorf("tailreach isn't running: %v", err)
 	}
 	defer c.Close()
 	json.NewEncoder(c).Encode(req)

@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-// One mydevices-capture process is kept warm and shared across viewer connections, so
+// One tailreach-capture process is kept warm and shared across viewer connections, so
 // reconnecting (switching apps on the phone, a network blip) resumes instantly
 // instead of starting a new capture from scratch.
 
@@ -58,7 +58,7 @@ func warmHelper() (*captureHelper, error) {
 	}
 	cmd := exec.Command(helperPath())
 	// The helper refuses to capture unless it was started by us (see capture/main.swift).
-	cmd.Env = append(os.Environ(), "MYDEVICES_PARENT="+strconv.Itoa(os.Getpid()))
+	cmd.Env = append(os.Environ(), "TAILREACH_PARENT="+strconv.Itoa(os.Getpid()))
 	ownGroup(cmd)
 	stdin, _ := cmd.StdinPipe()
 	stdout, _ := cmd.StdoutPipe()
@@ -78,7 +78,7 @@ func warmHelper() (*captureHelper, error) {
 }
 
 // helperDiag asks the capture helper whether macOS lets it record the screen and control
-// input (for `mydevices doctor`). With ask, macOS also lists it in both Privacy panes and
+// input (for `tailreach doctor`). With ask, macOS also lists it in both Privacy panes and
 // may show its prompt. It never borrows the helper from a live stream: busy while viewed.
 func helperDiag(ask bool) (res map[string]any, busy bool, err error) {
 	h, err := warmHelper()
@@ -178,7 +178,7 @@ func (h *captureHelper) kill() {
 	}()
 }
 
-// retireHelperOnExit: when mydevices is told to quit (logout, restart, Ctrl-C), it lets
+// retireHelperOnExit: when tailreach is told to quit (logout, restart, Ctrl-C), it lets
 // the helper end its capture session cleanly first. Otherwise launchd kills it outright
 // along with us, which can leave macOS's recording indicator stuck.
 func retireHelperOnExit() {

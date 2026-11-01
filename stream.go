@@ -18,10 +18,10 @@ import (
 	"github.com/coder/websocket"
 )
 
-// The fast path: H.264 from mydevices-capture (kept warm, see helper.go), relayed to the
+// The fast path: H.264 from tailreach-capture (kept warm, see helper.go), relayed to the
 // browser's WebCodecs decoder.
 //
-// browser ⇄ WebSocket ⇄ mydevices ⇄ stdin/stdout ⇄ mydevices-capture (ScreenCaptureKit + VideoToolbox)
+// browser ⇄ WebSocket ⇄ tailreach ⇄ stdin/stdout ⇄ tailreach-capture (ScreenCaptureKit + VideoToolbox)
 //
 // Binary messages to the browser are [type][payload] (1 = decoder config, 2 = video).
 // Text messages are JSON events. The browser sends JSON commands (input, start, keyframe);
@@ -45,7 +45,7 @@ var allowedCmds = map[string]bool{
 func helperPath() string {
 	exe, _ := os.Executable()
 	exe, _ = filepath.EvalSymlinks(exe)
-	return filepath.Join(filepath.Dir(exe), "mydevices-capture")
+	return filepath.Join(filepath.Dir(exe), "tailreach-capture")
 }
 
 func (a *app) fastAvailable() bool {
@@ -410,7 +410,7 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 				reply(b)
 			}()
 		case allowedCmds[t] && t != "start":
-			delete(c, "ask") // diag's "ask" (permission prompts) is for `mydevices doctor` only
+			delete(c, "ask") // diag's "ask" (permission prompts) is for `tailreach doctor` only
 			limit := 4096
 			if t == "clip-set" {
 				limit = 256 << 10
@@ -523,7 +523,7 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 
 // viewerName is the tailnet device on the other end (as forwarded by the hub, if any).
 func (a *app) viewerName(r *http.Request) string {
-	if v := r.Header.Get("X-Mydevices-Viewer"); v != "" && a.auth2 == nil && a.fromHub(r) {
+	if v := r.Header.Get("X-Tailreach-Viewer"); v != "" && a.auth2 == nil && a.fromHub(r) {
 		return v
 	}
 	if wi, err := a.lc.WhoIs(r.Context(), r.RemoteAddr); err == nil && wi.Node != nil {
@@ -538,7 +538,7 @@ func notify(title, body string) {
 		return
 	}
 	q := func(s string) string { return strings.NewReplacer(`\`, ``, `"`, ``).Replace(s) }
-	exec.Command("osascript", "-e", `display notification "`+q(body)+`" with title "mydevices" subtitle "`+q(title)+`"`).Start()
+	exec.Command("osascript", "-e", `display notification "`+q(body)+`" with title "tailreach" subtitle "`+q(title)+`"`).Start()
 }
 
 // Stop on the Mac's panel ends the session and refuses new ones for a while, so the

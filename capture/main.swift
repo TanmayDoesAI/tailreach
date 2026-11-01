@@ -1,10 +1,10 @@
-// mydevices-capture — the native half of mydevices on macOS.
+// tailreach-capture — the native half of tailreach on macOS.
 //
-//   mydevices-capture                   streams the screen as low-latency H.264 while a viewer is
+//   tailreach-capture                   streams the screen as low-latency H.264 while a viewer is
 //                                       attached, injects input, shows the "screen shared" panel
-//   mydevices-capture --settings SOCK   the settings window (see settings.swift)
+//   tailreach-capture --settings SOCK   the settings window (see settings.swift)
 //
-// `mydevices` keeps one warm for a short while after a viewer leaves, so coming back is instant.
+// `tailreach` keeps one warm for a short while after a viewer leaves, so coming back is instant.
 //   stdout: frames  [u32 big-endian length][u8 type][payload]
 //             type 1 = decoder config: [u16 json length][json {codec,w,h}][avcC or hvcC]
 //             type 2 = video:          [u8 keyframe][u64 timestamp µs][length-prefixed NAL units]
@@ -672,8 +672,8 @@ func handle(_ c: [String: Any]) {
     case "resend": capture.resendConfig()
     case "displays": DispatchQueue.main.async { sendDisplays() }
     case "diag":
-        // "ask" comes only from `mydevices doctor --ask` on this Mac (the server strips it from
-        // viewers): it puts mydevices in both Privacy lists, and macOS may show its prompt.
+        // "ask" comes only from `tailreach doctor --ask` on this Mac (the server strips it from
+        // viewers): it puts tailreach in both Privacy lists, and macOS may show its prompt.
         let ask = c["ask"] as? Bool ?? false
         DispatchQueue.main.async {
             if ask {
@@ -833,11 +833,11 @@ if let sock = arg("--settings") {
     runSettings(socketPath: sock) // never returns
 }
 
-// Only mydevices may start the capture side. Run any other way (by hand from a terminal),
+// Only tailreach may start the capture side. Run any other way (by hand from a terminal),
 // macOS would credit the screen recording to that app (Terminal, Warp, …) and show it as
 // "sharing" with no Stop that works, so refuse unless our own parent launched us.
-if ProcessInfo.processInfo.environment["MYDEVICES_PARENT"] != String(getppid()) {
-    FileHandle.standardError.write("mydevices-capture is started by mydevices; don't run it directly.\n".data(using: .utf8)!)
+if ProcessInfo.processInfo.environment["TAILREACH_PARENT"] != String(getppid()) {
+    FileHandle.standardError.write("tailreach-capture is started by tailreach; don't run it directly.\n".data(using: .utf8)!)
     exit(2)
 }
 
@@ -847,7 +847,7 @@ let clipboard = Clipboard()
 let lockWatcher = LockWatcher()
 let cursorWatcher = CursorWatcher()
 let panel = SharePanel {
-    event(["t": "stop-request"]) // mydevices ends the session and this process
+    event(["t": "stop-request"]) // tailreach ends the session and this process
 }
 // A display plugged in or removed: let the viewer update its list.
 NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { _ in
@@ -856,7 +856,7 @@ NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenPar
 // Warm up ScreenCaptureKit while idle, so the first frame comes quickly. (No capture yet.)
 Task { _ = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) }
 
-// No permission prompts from here: macOS attributes them to mydevices and asks on its
+// No permission prompts from here: macOS attributes them to tailreach and asks on its
 // own when something is actually missing. Just report it so the viewer can say so.
 if !AXIsProcessTrusted() {
     event(["t": "warn", "msg": "Accessibility permission is needed for mouse and keyboard control"])
@@ -868,7 +868,7 @@ Thread {
               let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { continue }
         handle(obj)
     }
-    // stdin closed: session over (or mydevices quit). End the capture session properly
+    // stdin closed: session over (or tailreach quit). End the capture session properly
     // before exiting, so macOS clears its screen-recording indicator.
     let done = DispatchSemaphore(value: 0)
     Task { await capture.stop(); done.signal() }

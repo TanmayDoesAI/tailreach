@@ -33,7 +33,7 @@ type app struct {
 	lc      *local.Client
 	web     fs.FS
 	domain  string // MagicDNS suffix, e.g. tail1234.ts.net
-	selfDNS string // this node, e.g. mydevices.tail1234.ts.net
+	selfDNS string // this node, e.g. tailreach.tail1234.ts.net
 	tsIP4   string // this node's tailnet IPv4 (WebRTC media only ever uses it)
 	owner   string // Tailscale login of whoever signed this device in
 	https   bool   // the tailnet issues HTTPS certificates (the viewer needs them)
@@ -52,19 +52,19 @@ type app struct {
 	vncState bool
 }
 
-// device is one machine running mydevices, as seen by the hub.
+// device is one machine running tailreach, as seen by the hub.
 type device struct {
 	Name     string    `json:"name"`
 	Host     string    `json:"host"` // tailnet hostname
 	OS       string    `json:"os"`
-	Online   bool      `json:"online"` // reachable on the tailnet and mydevices is running
+	Online   bool      `json:"online"` // reachable on the tailnet and tailreach is running
 	Screen   bool      `json:"screen"` // its VNC / Screen Sharing is on
 	Local    bool      `json:"local"`  // this is the hub machine itself
 	LastSeen time.Time `json:"lastSeen"`
 	IP       string    `json:"-"`
 }
 
-// info is what every node reports at /.well-known/mydevices.json.
+// info is what every node reports at /.well-known/tailreach.json.
 type info struct {
 	Name    string `json:"name"`
 	OS      string `json:"os"`
@@ -76,7 +76,7 @@ type info struct {
 
 func (a *app) handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /.well-known/mydevices.json", a.serveInfo)
+	mux.HandleFunc("GET /.well-known/tailreach.json", a.serveInfo)
 	if a.auth2 != nil {
 		a.authRoutes(mux)
 	}
@@ -167,7 +167,7 @@ func (a *app) fromHub(r *http.Request) bool {
 func (a *app) plainHandler() http.Handler {
 	h := a.handler()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-Mydevices-Hub") != "" || strings.HasPrefix(r.URL.Path, "/.well-known/") {
+		if r.Header.Get("X-Tailreach-Hub") != "" || strings.HasPrefix(r.URL.Path, "/.well-known/") {
 			h.ServeHTTP(w, r)
 			return
 		}
@@ -372,7 +372,7 @@ func (a *app) discoverLoop(ctx context.Context) {
 	}
 }
 
-// discover asks every online peer owned by the same person whether it runs mydevices.
+// discover asks every online peer owned by the same person whether it runs tailreach.
 func (a *app) discover(ctx context.Context) {
 	st, err := a.lc.Status(ctx)
 	if err != nil {
@@ -393,7 +393,7 @@ func (a *app) discover(ctx context.Context) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			req, _ := http.NewRequestWithContext(ctx, "GET", "http://"+ip+"/.well-known/mydevices.json", nil)
+			req, _ := http.NewRequestWithContext(ctx, "GET", "http://"+ip+"/.well-known/tailreach.json", nil)
 			resp, err := client.Do(req)
 			if err != nil {
 				return
@@ -485,8 +485,8 @@ func (a *app) proxyToDevice(w http.ResponseWriter, r *http.Request, name string)
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(&url.URL{Scheme: "http", Host: ip})
 			pr.Out.Host = ip
-			pr.Out.Header.Set("X-Mydevices-Hub", "1")
-			pr.Out.Header.Set("X-Mydevices-Viewer", viewer)
+			pr.Out.Header.Set("X-Tailreach-Hub", "1")
+			pr.Out.Header.Set("X-Tailreach-Viewer", viewer)
 		},
 		Transport:     a.srv.HTTPClient().Transport,
 		FlushInterval: -1,

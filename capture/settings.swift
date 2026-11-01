@@ -1,4 +1,4 @@
-// `mydevices settings` — the settings window. It talks to the running mydevices through
+// `tailreach settings` — the settings window. It talks to the running tailreach through
 // its local control socket (owner-only Unix socket), never over the network.
 import AppKit
 import SwiftUI
@@ -106,7 +106,7 @@ struct SettingsView: View {
         Form {
             if control.offline {
                 Section {
-                    Label("mydevices isn't running on this Mac.", systemImage: "exclamationmark.triangle")
+                    Label("tailreach isn't running on this Mac.", systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.orange)
                 }
             }
@@ -218,7 +218,7 @@ func runSettings(socketPath: String) -> Never {
     let main = NSMenu()
     let appItem = NSMenuItem()
     appItem.submenu = NSMenu()
-    appItem.submenu?.addItem(withTitle: "Quit mydevices Settings", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+    appItem.submenu?.addItem(withTitle: "Quit tailreach Settings", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
     let editItem = NSMenuItem()
     let edit = NSMenu(title: "Edit")
     edit.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
@@ -233,7 +233,7 @@ func runSettings(socketPath: String) -> Never {
     let control = ControlClient(path: socketPath)
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 680),
                           styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
-    window.title = "mydevices"
+    window.title = "tailreach"
     window.contentView = NSHostingView(rootView: SettingsView(control: control))
     window.center()
     window.makeKeyAndOrderFront(nil)

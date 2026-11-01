@@ -50,7 +50,7 @@ func (a *app) receiveFile(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("file from viewer: %v", err)
 		if errors.Is(err, fs.ErrPermission) || errors.Is(err, errSlow) {
-			http.Error(w, "the Mac doesn't let mydevices save to Downloads: run `mydevices doctor --ask` on the Mac", http.StatusServiceUnavailable)
+			http.Error(w, "the Mac doesn't let tailreach save to Downloads: run `tailreach doctor --ask` on the Mac", http.StatusServiceUnavailable)
 			return
 		}
 		http.Error(w, "couldn't save the file", http.StatusInternalServerError)
@@ -137,10 +137,10 @@ func cleanFileName(s string) string {
 	return s
 }
 
-// downloadsWritable checks that mydevices may save to Downloads (`mydevices doctor --ask`):
+// downloadsWritable checks that tailreach may save to Downloads (`tailreach doctor --ask`):
 // the first try makes macOS ask, on the Mac.
 func downloadsWritable() bool {
-	f, p, err := createNew(downloadsDir(), ".mydevices-check")
+	f, p, err := createNew(downloadsDir(), ".tailreach-check")
 	if err != nil {
 		return false
 	}
