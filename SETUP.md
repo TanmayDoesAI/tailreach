@@ -18,8 +18,8 @@ git clone https://github.com/TanmayDoesAI/tailreach.git && cd tailreach
 make setup          # signing identity, build, login item, then a check of everything
 ```
 
-With Homebrew instead of a clone: `brew tap tanmaydoesai/tailreach https://github.com/TanmayDoesAI/tailreach`,
-`brew install --HEAD tailreach`, then `mydevices setup` (it does what `make setup` does, for
+With Homebrew instead of a clone: `brew install tanmaydoesai/tailreach/tailreach`, then
+`mydevices setup` (it does what `make setup` does, for
 the installed copy; run it again after every upgrade). Use `mydevices` wherever this guide
 says `./mydevices`.
 

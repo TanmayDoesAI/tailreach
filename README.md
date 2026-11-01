@@ -53,12 +53,11 @@ make setup
 **Or with Homebrew** (it fetches Go for the build itself; you still need the Command Line Tools):
 
 ```sh
-brew tap tanmaydoesai/tailreach https://github.com/TanmayDoesAI/tailreach
-brew install --HEAD tailreach
+brew install tanmaydoesai/tailreach/tailreach
 mydevices setup
 ```
 
-Run `mydevices setup` again after each `brew upgrade --fetch-HEAD tailreach`: Homebrew can't use your keychain while it builds, so `setup` is what signs the new copy and keeps macOS's permissions in place.
+Run `mydevices setup` again after each `brew upgrade tailreach`: Homebrew can't use your keychain while it builds, so `setup` is what signs the new copy and keeps macOS's permissions in place.
 
 There are no downloads: tailreach is built from source on your own Mac, and `make setup` (or `mydevices setup`) handles the rest. It builds tailreach, signs it with a local identity (so macOS remembers its permissions), and makes it start at login. It finishes with `mydevices doctor`, which checks everything and tells you what's left, with the exact fix for each:
 

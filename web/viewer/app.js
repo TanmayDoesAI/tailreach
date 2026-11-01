@@ -1245,6 +1245,7 @@ const ICON_PATHS = {
   sunDim:       '<circle cx="12" cy="12" r="3.5"/><path d="M12 5.5v.01M12 18.5v.01M5.5 12h.01M18.5 12h.01M7.4 7.4h.01M16.6 16.6h.01M7.4 16.6h.01M16.6 7.4h.01"/>',
   sun:          '<circle cx="12" cy="12" r="3.5"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6L7 7M17 17l1.4 1.4M5.6 18.4L7 17M17 7l1.4-1.4"/>',
   x:            '<path d="M7 7l10 10M17 7L7 17"/>',
+  leave:        '<path d="M10 4.5H6A1.5 1.5 0 0 0 4.5 6v12A1.5 1.5 0 0 0 6 19.5h4M14 8l4 4-4 4M18 12H8.5"/>',
   expand:       '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
   shrink:       '<path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/>',
   grip:         '<path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke-width="3"/>',
