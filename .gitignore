@@ -9,6 +9,7 @@ dist/
 # Runtime state / secrets
 security.json
 trusted.json
+invites.json
 audit.log
 control.sock
 hub-id

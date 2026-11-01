@@ -34,7 +34,8 @@
       width: 100%; height: 50px; padding: 0 16px; border: 0; border-radius: 12px; outline: none;
       background: var(--fill); color: var(--text); font: inherit; font-size: 17px; text-align: center;
     }
-    input#code { letter-spacing: .5em; font-variant-numeric: tabular-nums; }
+    input#code, input#inviteCode { letter-spacing: .5em; font-variant-numeric: tabular-nums; }
+    input#inviteCode { text-transform: uppercase; letter-spacing: .3em; }
     input::placeholder { color: rgba(235,235,245,.3); letter-spacing: normal; }
     button {
       width: 100%; height: 50px; border: 0; border-radius: 12px; cursor: pointer;
@@ -57,6 +58,15 @@
     <input id="pw" type="password" autocomplete="current-password" placeholder="Password">
     <button type="submit">Continue</button>
     <p class="note" style="margin-top:6px">This device will be remembered for 30 days.</p>
+  </form>
+
+  <!-- A guest (someone the owner invited; the Mac knows from their Tailscale login) gets
+       only this: the one-time code they were sent, never the password or passkeys -->
+  <form id="invite" class="hidden">
+    <p class="note">You were invited to this Mac. Enter the invite code you were sent.</p>
+    <input id="inviteCode" autocomplete="one-time-code" autocapitalize="characters" autocorrect="off" spellcheck="false" maxlength="9" placeholder="Code">
+    <button type="submit">Continue</button>
+    <p class="note" style="margin-top:6px">The code works once. The Mac shows its owner that you’re connected.</p>
   </form>
 
   <!-- Returning device -->
@@ -140,7 +150,7 @@
   }
 
   function show(id) {
-    for (const s of ['password', 'signin', 'pair', 'offer']) $('#' + s).classList.toggle('hidden', s !== id);
+    for (const s of ['password', 'signin', 'pair', 'offer', 'invite']) $('#' + s).classList.toggle('hidden', s !== id);
     $('#err').textContent = '';
   }
   const fail = (e) => {
@@ -210,8 +220,22 @@
     } catch (err) { fail(err); }
   };
 
+  $('#invite').onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      await post('auth/invite', { code: $('#inviteCode').value });
+      location.replace(safeNext);
+    } catch (err) { fail(err); }
+  };
+
   async function route() {
     const st = await (await fetch('auth/status', { cache: 'no-store' })).json();
+    if (st.guest) {   // invited by the owner: a one-time code, never their password or passkeys
+      $('#who').textContent = `Guest access${st.viewOnly ? ' · view only' : ''}`;
+      if (st.authed) return location.replace(safeNext);
+      show('invite'); $('#inviteCode').focus();
+      return;
+    }
     $('#who').textContent = st.owner;
     if (st.authed) return location.replace(safeNext);
     if (st.needPassword) { show('password'); $('#pw').focus(); return; }

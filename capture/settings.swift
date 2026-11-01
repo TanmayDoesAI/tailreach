@@ -18,6 +18,24 @@ struct LiveSession: Decodable, Identifiable {
     let started: String
 }
 
+struct GuestInvite: Decodable, Identifiable {
+    let login: String
+    let viewOnly: Bool
+    let expires: String
+    let used: String?
+    var id: String { login }
+}
+
+/// The reply to "invite": the one-time code is shown once, here, and never stored.
+struct NewInvite: Decodable {
+    let login: String
+    let code: String
+    let address: String
+    let machine: String
+    let admin: String
+    let viewOnly: Bool
+}
+
 struct ControlState: Decodable {
     var passwordEnabled = false
     var passwordSet = false
@@ -28,6 +46,8 @@ struct ControlState: Decodable {
     var url = ""
     var owner = ""
     var managesLogin = true
+    var invites: [GuestInvite]?
+    var invited: NewInvite?
     var error: String?
 }
 
@@ -38,6 +58,11 @@ final class ControlClient: ObservableObject {
     @Published var offline = false
     @Published var pw1 = ""
     @Published var pw2 = ""
+    @Published var guestLogin = ""
+    @Published var guestHours = 24
+    @Published var guestViewOnly = true
+    @Published var lastInvite: NewInvite?
+    @Published var guestMessage: String?
     private var timer: Timer?
 
     init(path: String) {
@@ -55,14 +80,27 @@ final class ControlClient: ObservableObject {
                     return
                 }
                 self.offline = false
+                let guestOp = ["invite", "uninvite"].contains(req["op"] as? String ?? "")
                 if let err = st.error {
-                    self.message = err
+                    if guestOp { self.guestMessage = err } else { self.message = err }
                     return
                 }
                 self.state = st
+                if let inv = st.invited {
+                    self.lastInvite = inv
+                    self.guestLogin = ""
+                    self.guestMessage = nil
+                } else if req["op"] as? String == "uninvite" {
+                    self.lastInvite = nil
+                    self.guestMessage = "Removed. Anything they had open was ended."
+                }
                 if let done { self.message = done }
             }
         }
+    }
+
+    func invite() {
+        send(["op": "invite", "login": guestLogin.trimmingCharacters(in: .whitespaces), "hours": guestHours, "viewOnly": guestViewOnly])
     }
 
     /// One JSON line out, one JSON line back.
@@ -167,6 +205,10 @@ struct SettingsView: View {
                 }
             }
 
+            if control.state.managesLogin {
+                GuestsSection(control: control)
+            }
+
             Section {
                 Toggle("Keep this Mac reachable while plugged in", isOn: Binding(
                     get: { control.state.keepAwake },
@@ -198,6 +240,67 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .frame(width: 500, height: 680)
     }
+}
+
+/// Guests: someone else (a friend, a colleague) let in for a while, by their Tailscale login.
+struct GuestsSection: View {
+    @ObservedObject var control: ControlClient
+
+    var body: some View {
+        Section {
+            if (control.state.invites ?? []).isEmpty {
+                Text("No one else can get in").foregroundStyle(.secondary)
+            }
+            ForEach(control.state.invites ?? []) { g in
+                HStack {
+                    VStack(alignment: .leading) {
+                        Text(g.login)
+                        Text("\(g.viewOnly ? "View only" : "Can control") · until \(shortDateTime(g.expires))\(g.used == nil ? " · code not used yet" : "")")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Remove") { control.send(["op": "uninvite", "login": g.login]) }
+                }
+            }
+            TextField("Their Tailscale login (name@example.com)", text: $control.guestLogin)
+            Picker("For", selection: $control.guestHours) {
+                Text("1 hour").tag(1)
+                Text("4 hours").tag(4)
+                Text("1 day").tag(24)
+                Text("3 days").tag(72)
+                Text("1 week").tag(168)
+                Text("30 days").tag(720)
+            }
+            Toggle("View only (they can't control this Mac)", isOn: $control.guestViewOnly)
+            HStack {
+                if let m = control.guestMessage { Text(m).font(.callout).foregroundStyle(.secondary) }
+                Spacer()
+                Button("Invite Someone…") { control.invite() }
+                    .disabled(!control.guestLogin.contains("@"))
+            }
+            if let inv = control.lastInvite {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Invite code for \(inv.login): \(inv.code)").font(.body.monospaced().bold()).textSelection(.enabled)
+                    Text("1. Share this Mac with them in Tailscale: \(inv.admin) → \"\(inv.machine)\" → ⋯ → Share…, and send them the link.")
+                    Text("2. They accept it, then open \(inv.address) and enter the code. It works once.")
+                }
+                .font(.callout).textSelection(.enabled)
+            }
+        } header: { Text("Guests") } footer: {
+            Text("Let someone else see (or use) this Mac for a while. They sign in with their own Tailscale account and a one-time code, never your password, and the panel on this Mac shows who's connected. Invites end by themselves.")
+        }
+    }
+}
+
+private func shortDateTime(_ iso: String) -> String {
+    let f = ISO8601DateFormatter()
+    f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    let d = f.date(from: iso) ?? ISO8601DateFormatter().date(from: iso)
+    guard let d else { return iso }
+    return d.formatted(date: .abbreviated, time: .shortened)
+}
+
+extension SettingsView {
 
     private func shortDate(_ iso: String) -> String {
         let f = ISO8601DateFormatter()

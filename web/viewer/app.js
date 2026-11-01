@@ -84,7 +84,11 @@ async function boot() {
     $('#macUser').textContent = caps.user;
     $('#macUserField').value = caps.user;
     document.title = `${caps.name} · tailreach`;
-    if (!caps.fast) { location.replace('classic/'); return; }
+    if (caps.guest) markGuest();
+    if (!caps.fast) {
+      if (caps.guest) return setState('off', 'This Mac can’t share its screen right now.');   // classic (VNC) isn't for guests
+      location.replace('classic/'); return;
+    }
   } catch {
     setState('off', 'Can’t reach this device.');
     return setTimeout(boot, 3000);
@@ -220,7 +224,10 @@ function stoppedOnMac() {
 // everything that must arrive, in order, takes the reliable one. Big or control
 // messages (start, clipboard, WebRTC setup) stay on the WebSocket.
 const OVER_RTC = new Set(['rel', 'btn', 'click', 'scroll', 'key', 'text', 'media', 'ping']);
+// A view-only guest sends only what keeps the stream going (the Mac enforces the same).
+const VIEW_ONLY_SENDS = new Set(['start', 'kf', 'resend', 'ping', 'spong', 'bye', 'vstats', 'dlog', 'rtc-offer', 'rtc-off']);
 function send(obj) {
+  if (caps.viewOnly && !VIEW_ONLY_SENDS.has(obj.t)) return;
   const dc = obj.t === 'abs' ? moveDC : OVER_RTC.has(obj.t) ? inputDC : null;
   // While WebRTC is reconnecting (pc 'disconnected'), the WebSocket may still get through.
   if (dc?.readyState === 'open' && pc?.connectionState === 'connected') { dc.send(JSON.stringify(obj)); return; }
@@ -868,7 +875,9 @@ function drawCursor() {
 }
 
 // Move the local cursor right away (trackpad: relative in Mac points; touch/mouse: absolute).
+// Not when view only: the cursor is the Mac's, wherever its owner moves it.
 function predictRel(dx, dy) {
+  if (caps.viewOnly) return;
   cursor.x = Math.min(1, Math.max(0, cursor.x + dx / screenPts.w));
   cursor.y = Math.min(1, Math.max(0, cursor.y + dy / screenPts.h));
   lastLocalMove = performance.now();
@@ -877,6 +886,7 @@ function predictRel(dx, dy) {
   settleCursor();
 }
 function predictAbs(p) {
+  if (caps.viewOnly) return;
   cursor.x = p.x; cursor.y = p.y;
   lastLocalMove = performance.now();
   drawCursor();
@@ -1424,10 +1434,20 @@ function flash(msg) {
   onMacClipboard.t = setTimeout(() => $('#toast').classList.add('hidden'), 2500);
 }
 
+// ---------- guests ----------
+// Someone the owner invited: same screen, but no unlocking (that takes the owner's
+// password), and with view only nothing that would reach the Mac.
+function markGuest() {
+  document.body.classList.add('guest');
+  document.body.classList.toggle('view-only', !!caps.viewOnly);
+  $('#unlock .sub').textContent = 'The Mac is locked. Only its owner can unlock it.';
+}
+
 // ---------- files ----------
 // A file dropped on the screen (or picked in the panel) is saved in the Mac's Downloads.
 // Only that way round: the viewer can't read or open files on the Mac.
 async function sendFiles(files) {
+  if (caps.viewOnly) return flash('View only: you can’t send files to this Mac');
   for (const f of files) {
     try {
       const name = await upload(f);

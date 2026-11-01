@@ -73,6 +73,9 @@ func main() {
 		case "password":
 			exitOn(passwordCmd(os.Args[2:]))
 			return
+		case "invite":
+			exitOn(inviteCmd(os.Args[2:]))
+			return
 		case "settings":
 			exitOn(openSettings(os.Args[2:]))
 			return
@@ -189,6 +192,8 @@ func run(o options) error {
 		if a.auth2, err = newAuth(a.selfDNS, filepath.Join(o.stateDir, stateName), a.owner); err != nil {
 			return err
 		}
+		a.invites = newInviteStore(filepath.Join(o.stateDir, stateName))
+		go a.expireInvites()
 	}
 	if o.webDir != "" {
 		a.web = os.DirFS(o.webDir)
@@ -266,6 +271,7 @@ Usage:
   tailreach uninstall            stop and remove the login item
   tailreach settings             open the settings window on this Mac (password, trusted devices, sessions)
   tailreach password             set or reset the device password from a terminal (--off turns it off)
+  tailreach invite LOGIN         let someone else in for a while (--hours N, --view-only; --list, --remove LOGIN)
   tailreach doctor               check the setup and say how to fix what isn't right
 
 Flags:
@@ -384,4 +390,102 @@ func firstIPv4(ips []netip.Addr) string {
 		}
 	}
 	return ""
+}
+
+// inviteCmd lets someone else in for a while, from this Mac only (the running tailreach,
+// over its control socket): `tailreach invite name@example.com [--hours N] [--view-only]`,
+// `--list`, `--remove name@example.com`.
+func inviteCmd(args []string) error {
+	fs := flag.NewFlagSet("invite", flag.ExitOnError)
+	state := fs.String("state", defaultStateDir(), "state directory of the running tailreach")
+	hours := fs.Int("hours", 24, "how long the invite lasts, in hours (up to 720 = 30 days)")
+	viewOnly := fs.Bool("view-only", false, "they can watch the screen, not control it")
+	list := fs.Bool("list", false, "list running invites")
+	remove := fs.String("remove", "", "end this login's invite now (and anything they have open)")
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Usage: tailreach invite THEIR-TAILSCALE-LOGIN [--hours N] [--view-only]\n       tailreach invite --list\n       tailreach invite --remove THEIR-TAILSCALE-LOGIN")
+		fs.PrintDefaults()
+	}
+	// Flags may come before or after the login.
+	var pos []string
+	for {
+		fs.Parse(args)
+		if fs.NArg() == 0 {
+			break
+		}
+		pos = append(pos, fs.Arg(0))
+		args = fs.Args()[1:]
+	}
+	call := func(req map[string]any) (map[string]any, error) {
+		st, err := controlCall(*state, req)
+		if err != nil {
+			return nil, fmt.Errorf("tailreach isn't running: %v", err)
+		}
+		if e, ok := st["error"].(string); ok {
+			return nil, errors.New(e)
+		}
+		return st, nil
+	}
+	switch {
+	case *remove != "":
+		if _, err := call(map[string]any{"op": "uninvite", "login": *remove}); err != nil {
+			return err
+		}
+		fmt.Printf("✓ %s can't get in any more; anything they had open was ended.\n", *remove)
+		return nil
+	case *list:
+		st, err := call(map[string]any{"op": "status"})
+		if err != nil {
+			return err
+		}
+		inv, _ := st["invites"].([]any)
+		if len(inv) == 0 {
+			fmt.Println("No guests invited.")
+			return nil
+		}
+		for _, x := range inv {
+			m, _ := x.(map[string]any)
+			exp, _ := time.Parse(time.RFC3339Nano, fmt.Sprint(m["expires"]))
+			mode := "can control"
+			if m["viewOnly"] == true {
+				mode = "view only"
+			}
+			code := "code not used yet"
+			if _, used := m["used"]; used {
+				code = "signed in"
+			}
+			fmt.Printf("  %s  %s, until %s (%s)\n", m["login"], mode, exp.Local().Format("Mon Jan 2 15:04"), code)
+		}
+		return nil
+	case len(pos) != 1:
+		fs.Usage()
+		os.Exit(2)
+	}
+	if *hours < 1 || *hours > 720 {
+		return fmt.Errorf("--hours is 1 to 720 (30 days)")
+	}
+	st, err := call(map[string]any{"op": "invite", "login": pos[0], "hours": *hours, "viewOnly": *viewOnly})
+	if err != nil {
+		return err
+	}
+	in, _ := st["invited"].(map[string]any)
+	exp, _ := time.Parse(time.RFC3339Nano, fmt.Sprint(in["expires"]))
+	mode := "can see and control this Mac"
+	if *viewOnly {
+		mode = "can watch this Mac's screen, not control it"
+	}
+	fmt.Printf(`✓ Invited %s until %s: %s.
+
+What they need:
+  1. You share this Mac with them in Tailscale (free, works across Tailscale accounts):
+     %s → the machine "%s" → ⋯ → Share… → send them the link it makes.
+  2. They accept it, signed in to Tailscale as %s, then open
+     %s
+  3. The sign-in page asks them for this invite code:  %s
+     (one use, and it ends with the invite. Run this again for a new code.)
+
+This Mac shows who's connected while they view. End it any time:
+  tailreach invite --remove %s
+`, in["login"], exp.Local().Format("Mon Jan 2 15:04"), mode, in["admin"], in["machine"], in["login"], in["address"], in["code"], in["login"])
+	return nil
 }

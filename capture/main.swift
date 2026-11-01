@@ -671,6 +671,8 @@ func handle(_ c: [String: Any]) {
         if let br = c["br"] as? NSNumber { capture.enc.bitrate = br.intValue }
         let localCursor = c["localCursor"] as? Bool ?? false
         let viewer = c["viewer"] as? String ?? "a device"
+        let guest = c["guest"] as? String ?? "" // set by tailreach only, never by the viewer
+        let viewOnly = c["viewOnly"] as? Bool ?? false
         let display = CGDirectDisplayID(max(0, min(num(c["display"]), Double(UInt32.max))))
         if !AXIsProcessTrusted() {
             event(["t": "warn", "msg": "Accessibility permission is needed for mouse and keyboard control"])
@@ -681,7 +683,7 @@ func handle(_ c: [String: Any]) {
                 viewing = true
                 lockWatcher.reset()
                 cursorWatcher.reset()
-                panel.show(viewer: viewer) // shown before capture starts, so it can be left out of it
+                panel.show(viewer: viewer, guest: guest, viewOnly: viewOnly) // shown before capture starts, so it can be left out of it
                 sendDisplays()
             }
             await capture.start(maxW: max(320, w), maxH: max(240, h), fps: (10...120).contains(fps) ? fps : 60,

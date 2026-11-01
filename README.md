@@ -126,6 +126,27 @@ Use a laptop's, tablet's or phone's browser as a second monitor for the Mac. Ope
   - The Mac keeps a small colour-profile file per display size, in the system ColorSync folder.
   - Keep the Mac's lid open.
 
+## Letting someone else in
+
+Let a friend, a colleague or family see (or use) your Mac for a while. They need a free Tailscale account of their own; they never get your password.
+
+1. **Invite them, on the Mac:**
+   ```sh
+   tailreach invite their-login@example.com                 # 24 hours, they can control it
+   tailreach invite their-login@example.com --hours 2 --view-only
+   ```
+   Or use **Guests** in the settings window (`tailreach settings`). Use the login they sign in to Tailscale with (an e-mail, or `name@github`).
+2. **Share the Mac with them in Tailscale:** at [login.tailscale.com/admin/machines](https://login.tailscale.com/admin/machines), open the `devices` machine's **⋯** menu → **Share…**, and send them the link. Sharing a machine works across Tailscale accounts and is free. The invite command prints this step too.
+3. **They open the address** the command printed (`https://devices.<tailnet>.ts.net/mac/`) and enter the **invite code** it printed. The code works once and ends with the invite. Run `tailreach invite` again for a new one.
+
+What they get:
+- **This Mac only.** They don't see your other devices, can't unlock the Mac (that needs your password), and can't take it away from you while you're using it.
+- **View only** (`--view-only`): they see the screen and nothing else. No pointer, keyboard, clipboard, files or extended display. The Mac enforces this, not just their browser, and their viewer shows a **View only** pill.
+- **A short session.** Signing in lasts at most 4 hours, and never past the invite. After that they need a new code.
+- **You always know.** The "Screen shared" panel names them and says **Guest** (and **view only**), the Mac shows a notification when a guest connects, and invites, sign-ins and sessions go in the audit log.
+
+Invites end by themselves (24 hours unless you say `--hours`, at most 30 days). To end one now: `tailreach invite --remove their-login@example.com`, or **Remove** in the settings window. Anything they have open closes immediately. `tailreach invite --list` shows who's invited. You can also unshare the machine in the Tailscale admin console.
+
 ## How it works
 
 ```
@@ -155,6 +176,7 @@ Every request has to pass all of these layers:
 
 1. **Tailnet only.** Nothing listens on your LAN or the internet.
 2. **Owner only.** Every connection is identified with Tailscale `WhoIs`. Only the Tailscale user who signed the device in gets through (`--allow` adds others), and tagged devices are rejected.
+   - The one exception is a guest you invited from the Mac ([Letting someone else in](#letting-someone-else-in)): only their login, only until the invite ends, only this Mac, and only after entering a one-time code (5 wrong codes lock it for 10 minutes).
 3. **Device password (set on the Mac).** Each phone, tablet or computer enters it once, then is trusted for 30 days.
    - Trust is tied to that device's Tailscale identity, so a copied cookie doesn't work anywhere else.
    - Five wrong tries lock it for 15 minutes and notify the Mac.

@@ -26,8 +26,9 @@ final class SharePanel {
 
     }
 
-    /// Shown while the screen is being captured; hidden as soon as it stops.
-    func show(viewer: String) {
+    /// Shown while the screen is being captured; hidden as soon as it stops. A guest
+    /// (someone the owner invited) is named by their Tailscale login.
+    func show(viewer: String, guest: String = "", viewOnly: Bool = false) {
         if !panel.isVisible {
             model.started = Date()
             // On a physical screen, not the virtual one: it's excluded from capture, so on a
@@ -40,6 +41,8 @@ final class SharePanel {
             }
         }
         model.viewer = viewer
+        model.guest = guest
+        model.viewOnly = viewOnly
         panel.orderFrontRegardless()
     }
 
@@ -56,6 +59,8 @@ final class FirstClickHostingView<V: View>: NSHostingView<V> {
 final class PanelClock: ObservableObject {
     @Published var now = Date()
     @Published var viewer = ""
+    @Published var guest = "" // a guest's login; "" for the owner
+    @Published var viewOnly = false
     @Published var started = Date()
     @Published var pulse = false
     private var timer: Timer?
@@ -70,7 +75,11 @@ struct SharePanelView: View {
     @ObservedObject var clock: PanelClock
     let onStop: () -> Void
 
-    private var viewer: String { clock.viewer }
+    private var viewer: String { clock.guest.isEmpty ? clock.viewer : clock.guest }
+    private var title: String {
+        if clock.guest.isEmpty { return "Screen shared" }
+        return clock.viewOnly ? "Guest · view only" : "Guest · can control"
+    }
     private var started: Date { clock.started }
     private var now: Date { clock.now }
     private var pulse: Bool { clock.pulse }
@@ -78,14 +87,14 @@ struct SharePanelView: View {
     var body: some View {
         HStack(spacing: 10) {
             Circle()
-                .fill(Color.red)
+                .fill(clock.guest.isEmpty ? Color.red : Color.orange)
                 .frame(width: 10, height: 10)
                 .opacity(pulse ? 0.35 : 1)
                 .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: pulse)
             VStack(alignment: .leading, spacing: 1) {
-                Text("Screen shared").font(.system(size: 13, weight: .semibold))
+                Text(title).font(.system(size: 13, weight: .semibold))
                 Text("\(viewer) · \(elapsed)")
-                    .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                    .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
             }
             Spacer(minLength: 8)
             Button(action: onStop) {

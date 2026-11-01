@@ -38,8 +38,9 @@ type app struct {
 	owner   string // Tailscale login of whoever signed this device in
 	https   bool   // the tailnet issues HTTPS certificates (the viewer needs them)
 	allow   map[string]bool
-	auth2   *authState // passkeys (hub / standalone)
-	sec     *security  // device password + trusted devices
+	auth2   *authState   // passkeys (hub / standalone)
+	invites *inviteStore // guests (hub / standalone only; nil behind a hub)
+	sec     *security    // device password + trusted devices
 
 	hubMu sync.Mutex
 	hubID string // pinned StableID of the hub (devices behind a hub)
@@ -94,6 +95,10 @@ func (a *app) handler() http.Handler {
 			name := r.PathValue("name")
 			if name == a.opt.name {
 				http.StripPrefix("/"+name, viewer).ServeHTTP(w, r)
+				return
+			}
+			if guestOf(r) != nil { // a guest is invited to this Mac only, never the owner's other devices
+				http.NotFound(w, r)
 				return
 			}
 			a.proxyToDevice(w, r, name)
@@ -182,6 +187,11 @@ func (a *app) viewer() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/websockify":
+			// Screen Sharing (VNC) means full control with the Mac's own account: never for guests.
+			if guestOf(r) != nil {
+				http.Error(w, "not available to guests", http.StatusForbidden)
+				return
+			}
 			a.relayVNC(w, r)
 			return
 		case "/stream":
@@ -193,6 +203,10 @@ func (a *app) viewer() http.Handler {
 		case "/caps":
 			if a.fastAvailable() {
 				go warmHelper() // the viewer is about to connect: get capture ready
+			}
+			if g := guestOf(r); g != nil { // no macOS account name for guests: they can't unlock the Mac
+				writeJSON(w, map[string]any{"name": a.opt.name, "fast": a.fastAvailable(), "vnc": false, "guest": true, "viewOnly": g.ViewOnly, "expires": g.Expires})
+				return
 			}
 			writeJSON(w, map[string]any{"name": a.opt.name, "fast": a.fastAvailable(), "vnc": a.vncUp(), "user": consoleUser()})
 			return
@@ -217,7 +231,8 @@ func (a *app) serveFile(name string) http.HandlerFunc {
 
 // ---------- security ----------
 
-// auth lets in only the Tailscale user who signed this device in (plus --allow).
+// auth lets in only the Tailscale user who signed this device in (plus --allow), and
+// guests whose invite is running (invites.go), who are marked on the request.
 // Tailscale tells us who is on the other end of every connection, so there is
 // no password to leak; the Mac's own login is still required for the screen.
 func (a *app) auth(next http.Handler) http.Handler {
@@ -229,10 +244,20 @@ func (a *app) auth(next http.Handler) http.Handler {
 			return
 		}
 		login := who.UserProfile.LoginName
-		if who.Node.IsTagged() || (login != a.owner && !a.allow[login]) {
+		var guest *invite
+		if !who.Node.IsTagged() && login != a.owner && !a.allow[login] && a.invites != nil {
+			if inv, ok := a.invites.get(login); ok {
+				inv.CodeHash = ""
+				guest = &inv
+			}
+		}
+		if who.Node.IsTagged() || (login != a.owner && !a.allow[login] && guest == nil) {
 			log.Printf("✗ denied %s from %s (%s)", r.URL.Path, login, who.Node.ComputedName)
 			http.Error(w, "forbidden: "+login+" is not allowed on this device", http.StatusForbidden)
 			return
+		}
+		if guest != nil {
+			r = r.WithContext(context.WithValue(r.Context(), guestKey{}, guest))
 		}
 		h := w.Header()
 		h.Set("X-Frame-Options", "DENY")
@@ -241,6 +266,14 @@ func (a *app) auth(next http.Handler) http.Handler {
 		h.Set("Content-Security-Policy", "default-src 'self'; connect-src 'self' wss:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; frame-ancestors 'none'")
 		next.ServeHTTP(w, r)
 	})
+}
+
+type guestKey struct{}
+
+// guestOf is the invite of the guest making this request, or nil for the owner (and --allow).
+func guestOf(r *http.Request) *invite {
+	g, _ := r.Context().Value(guestKey{}).(*invite)
+	return g
 }
 
 // ---------- the screen relay ----------
@@ -284,7 +317,7 @@ func (a *app) relayVNC(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
-	defer trackSession("vnc", who, cancel, false)()
+	defer trackSession("vnc", who, "", cancel, false)()
 	go func() {
 		<-ctx.Done()
 		if !kept.Load() {
@@ -340,8 +373,14 @@ func (a *app) serveInfo(w http.ResponseWriter, r *http.Request) {
 // ---------- hub: finding devices ----------
 
 func (a *app) serveDevices(w http.ResponseWriter, r *http.Request) {
+	self := &device{Name: a.opt.name, Host: a.selfDNS, OS: runtime.GOOS, Online: true, Screen: a.vncUp(), Local: true, LastSeen: time.Now()}
+	if g := guestOf(r); g != nil { // a guest sees only this Mac, and nothing about the owner
+		self.Screen = a.fastAvailable() || self.Screen
+		writeJSON(w, map[string]any{"devices": []*device{self}, "guest": true, "viewOnly": g.ViewOnly, "expires": g.Expires, "hub": a.selfDNS})
+		return
+	}
 	a.mu.RLock()
-	list := []*device{{Name: a.opt.name, Host: a.selfDNS, OS: runtime.GOOS, Online: true, Screen: a.vncUp(), Local: true, LastSeen: time.Now()}}
+	list := []*device{self}
 	for _, d := range a.devices {
 		if d.Name != a.opt.name {
 			c := *d

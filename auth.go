@@ -51,7 +51,9 @@ func (u *passkeyUser) WebAuthnCredentials() []webauthn.Credential { return u.Cre
 
 type session struct {
 	created, seen time.Time
+	expires       time.Time // sessionMaxAge after created, or sooner for a guest
 	device        string
+	guest         string // the guest's login; "" for the owner. A session only works for its own kind.
 }
 
 type authState struct {
@@ -115,8 +117,12 @@ func tokenHash(t string) string {
 	return base64.RawURLEncoding.EncodeToString(h[:])
 }
 
-// valid reports whether the request carries a live session, refreshing its idle timer.
-func (s *authState) valid(r *http.Request) bool {
+// valid reports whether the request carries a live owner session, refreshing its idle timer.
+func (s *authState) valid(r *http.Request) bool { return s.validFor(r, "") }
+
+// validFor is valid for a guest's own session (guest = their login). An owner's session
+// never counts for a guest, nor a guest's for the owner.
+func (s *authState) validFor(r *http.Request, guest string) bool {
 	c, err := r.Cookie(sessionCookie)
 	if err != nil {
 		return false
@@ -129,8 +135,11 @@ func (s *authState) valid(r *http.Request) bool {
 		return false
 	}
 	now := time.Now()
-	if now.Sub(ss.created) > sessionMaxAge || now.Sub(ss.seen) > sessionIdle {
+	if !now.Before(ss.expires) || now.Sub(ss.seen) > sessionIdle {
 		delete(s.sessions, k)
+		return false
+	}
+	if ss.guest != guest {
 		return false
 	}
 	ss.seen = now
@@ -138,15 +147,30 @@ func (s *authState) valid(r *http.Request) bool {
 }
 
 func (s *authState) startSession(w http.ResponseWriter, device string) {
+	s.startSessionFor(w, device, "", time.Now().Add(sessionMaxAge))
+}
+
+func (s *authState) startSessionFor(w http.ResponseWriter, device, guest string, expires time.Time) {
 	tok := base64.RawURLEncoding.EncodeToString(randBytes(32))
 	now := time.Now()
 	s.mu.Lock()
-	s.sessions[tokenHash(tok)] = &session{created: now, seen: now, device: device}
+	s.sessions[tokenHash(tok)] = &session{created: now, seen: now, expires: expires, device: device, guest: guest}
 	s.mu.Unlock()
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookie, Value: tok, Path: "/",
-		MaxAge: int(sessionMaxAge.Seconds()), HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode,
+		MaxAge: max(1, int(time.Until(expires).Seconds())), HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode,
 	})
+}
+
+// dropGuestSessions signs a guest out everywhere (their invite was removed or ended).
+func (s *authState) dropGuestSessions(login string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for k, ss := range s.sessions {
+		if ss.guest != "" && loginKey(ss.guest) == loginKey(login) {
+			delete(s.sessions, k)
+		}
+	}
 }
 
 // ---------- HTTP ----------
@@ -154,6 +178,10 @@ func (s *authState) startSession(w http.ResponseWriter, device string) {
 func (a *app) authRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /login", a.serveFile("login.html"))
 	mux.HandleFunc("GET /auth/status", func(w http.ResponseWriter, r *http.Request) {
+		if g := guestOf(r); g != nil { // a guest learns nothing about the owner's sign-in
+			writeJSON(w, map[string]any{"guest": true, "authed": a.auth2.validFor(r, g.Login), "viewOnly": g.ViewOnly, "expires": g.Expires, "login": g.Login})
+			return
+		}
 		a.auth2.mu.Lock()
 		registered := len(a.auth2.user.Creds) > 0
 		a.auth2.mu.Unlock()
@@ -162,6 +190,7 @@ func (a *app) authRoutes(mux *http.ServeMux) {
 	})
 	mux.HandleFunc("POST /auth/password", a.passwordLogin)
 	mux.HandleFunc("POST /auth/pair", a.pairRequest)
+	mux.HandleFunc("POST /auth/invite", a.redeemInvite)
 	mux.HandleFunc("POST /auth/register/begin", a.registerBegin)
 	mux.HandleFunc("POST /auth/register/finish", a.registerFinish)
 	mux.HandleFunc("POST /auth/login/begin", a.loginBegin)
@@ -188,7 +217,24 @@ func (a *app) authRoutes(mux *http.ServeMux) {
 func (a *app) requireSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
-		if p == "/login" || p == "/manifest.webmanifest" || strings.HasPrefix(p, "/icons/") || strings.HasPrefix(p, "/auth/") || strings.HasPrefix(p, "/.well-known/") || (a.passwordOK(r) && a.auth2.valid(r)) {
+		open := p == "/login" || p == "/manifest.webmanifest" || strings.HasPrefix(p, "/icons/") || strings.HasPrefix(p, "/.well-known/")
+		var ok bool
+		if g := guestOf(r); g != nil {
+			// A guest never uses the owner's password, pairing codes or passkeys: of /auth/
+			// only the status, redeeming their invite code and signing out.
+			switch {
+			case p == "/auth/status" || p == "/auth/invite" || p == "/auth/logout":
+				ok = true
+			case strings.HasPrefix(p, "/auth/"):
+				http.Error(w, "not available to guests", http.StatusForbidden)
+				return
+			default:
+				ok = open || a.auth2.validFor(r, g.Login)
+			}
+		} else {
+			ok = open || strings.HasPrefix(p, "/auth/") || (a.passwordOK(r) && a.auth2.valid(r))
+		}
+		if ok {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -225,6 +271,45 @@ func (a *app) pairRequest(w http.ResponseWriter, r *http.Request) {
 	log.Printf("🔑 Pairing code for %s: %s (valid 5 minutes)", who, code)
 	notify("Pairing code: "+code, who+" wants to add a passkey")
 	a.audit("pair-requested", who, "")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// redeemInvite signs a guest in with the one-time code from their invite. auth() has
+// already checked that this Tailscale login has a running invite.
+func (a *app) redeemInvite(w http.ResponseWriter, r *http.Request) {
+	if !a.sameOrigin(r) {
+		http.Error(w, "bad origin", http.StatusForbidden)
+		return
+	}
+	g := guestOf(r)
+	if g == nil {
+		http.Error(w, "invite codes are for guests; sign in the usual way", http.StatusForbidden)
+		return
+	}
+	var body struct{ Code string }
+	json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&body)
+	who := a.viewerName(r)
+	inv, err := a.invites.redeem(g.Login, body.Code)
+	if err != nil {
+		a.audit("invite-code-failed", who, err.Error())
+		if err == errJustLocked {
+			notify("Invite code locked for 10 minutes", "too many wrong codes from "+g.Login)
+		}
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	mode := "can control"
+	if inv.ViewOnly {
+		mode = "view only"
+	}
+	a.audit("invite-used", who, mode)
+	log.Printf("✓ Guest %s signed in (%s)", g.Login, mode)
+	notify("Guest signed in: "+g.Login, mode)
+	until := time.Now().Add(guestSession)
+	if inv.Expires.Before(until) { // never beyond the invite
+		until = inv.Expires
+	}
+	a.auth2.startSessionFor(w, who, g.Login, until)
 	w.WriteHeader(http.StatusNoContent)
 }
 
