@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strings"
 )
 
 // `mydevices setup` does on an installed copy (Homebrew's, say) what `make setup` does in a
@@ -31,7 +32,8 @@ func setup(args []string) error {
 	exe, _ = filepath.EvalSymlinks(exe)
 
 	if out, err := exec.Command("sh", "-c", signingIdentityScript).CombinedOutput(); err != nil {
-		return fmt.Errorf("signing identity: %v: %s", err, out)
+		return fmt.Errorf("couldn't make the signing identity (%v): %s\n"+
+			"If macOS asked for your login keychain password, run `mydevices setup` again and allow it.", err, strings.TrimSpace(string(out)))
 	} else {
 		fmt.Print(string(out))
 	}

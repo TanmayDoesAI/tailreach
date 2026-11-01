@@ -468,5 +468,24 @@ func (a *app) control(req map[string]any) map[string]any {
 	st["name"] = a.opt.name
 	st["version"] = version
 	st["debug"] = debugLog
+	st["ownDevices"] = a.ownDevices()
 	return st
+}
+
+// ownDevices counts the owner's other devices on the tailnet (a phone, a laptop: what
+// they'll view from), or -1 if Tailscale didn't say.
+func (a *app) ownDevices() int {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	s, err := a.lc.Status(ctx)
+	if err != nil {
+		return -1
+	}
+	n := 0
+	for _, p := range s.Peer {
+		if u, ok := s.User[p.UserID]; ok && u.LoginName == a.owner && (p.Tags == nil || p.Tags.Len() == 0) {
+			n++
+		}
+	}
+	return n
 }

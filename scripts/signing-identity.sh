@@ -19,6 +19,9 @@ extendedKeyUsage = critical, codeSigning
 basicConstraints = critical, CA:false
 CFG
 openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -keyout "$TMP/key.pem" -out "$TMP/cert.pem" -config "$TMP/cfg" 2>/dev/null
-openssl pkcs12 -export -legacy -inkey "$TMP/key.pem" -in "$TMP/cert.pem" -name "$NAME" -out "$TMP/id.p12" -passout pass:mydevices
+# OpenSSL 3 needs -legacy for a file macOS can import; macOS's own LibreSSL has no such option.
+LEGACY=""
+openssl pkcs12 -help 2>&1 | grep -q -- -legacy && LEGACY="-legacy"
+openssl pkcs12 -export $LEGACY -inkey "$TMP/key.pem" -in "$TMP/cert.pem" -name "$NAME" -out "$TMP/id.p12" -passout pass:mydevices
 security import "$TMP/id.p12" -k "$HOME/Library/Keychains/login.keychain-db" -P mydevices -T /usr/bin/codesign >/dev/null
 echo "✓ created '$NAME' (login keychain)"

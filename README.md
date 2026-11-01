@@ -186,6 +186,14 @@ Tip: in the Tailscale admin console's access controls, you can also limit which 
 - **Sleep:** turn on *Keep this Mac reachable while plugged in* in settings. The display still sleeps, but the Mac stays online.
 - **Restart:** with FileVault on, the Mac waits at the disk-unlock screen before anything starts, so no remote tool can reach it. Someone has to type the password there once. After that, mydevices starts on its own if it's installed with `./mydevices install …`. For restarts you plan, `sudo fdesetup authrestart` skips that screen once.
 
+## If something goes wrong
+
+Run `mydevices doctor` (`./mydevices doctor` in a clone). It checks every step and prints the exact fix for whatever isn't right, including the Tailscale sign-in, a phone that isn't on your tailnet yet, macOS permissions and the error from the log if tailreach stopped.
+
+- **The link doesn't open on your phone:** the phone isn't on your tailnet. Open the Tailscale app on it and sign in with the same account as the Mac.
+- **Still stuck:** let a coding agent finish it with you. Clone the repo, open it in Claude Code, Codex or Cursor, and say: *"Set up tailreach on this Mac by following SETUP.md. Stop and tell me whenever I need to do something myself."* `AGENTS.md` and `SETUP.md` tell it what it may and may not do for you.
+- **A bug:** [open an issue](https://github.com/TanmayDoesAI/tailreach/issues) with what `mydevices doctor` printed (it never prints your password, but take out your tailnet name and e-mail before posting).
+
 ## Known limitations
 
 - **Mac only, for the fast stream and the extended display.** Windows and Linux hosts work through VNC for now.

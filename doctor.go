@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -28,9 +29,20 @@ func doctor(args []string) error {
 	exe, _ := os.Executable()
 	exe, _ = filepath.EvalSymlinks(exe)
 	mac := runtime.GOOS == "darwin"
+	// The fixes name the commands for this kind of install: a Homebrew copy or a checkout.
+	me, restart, rebuild := "./mydevices", "`make reload`", "`make local && make reload`"
+	if launchPath(exe) != exe {
+		me, restart, rebuild = "mydevices", "`mydevices setup`", "`mydevices setup`"
+	}
 
 	if mac {
 		d.section("This Mac")
+		if out, err := exec.Command("sw_vers", "-productVersion").Output(); err == nil {
+			v := strings.TrimSpace(string(out))
+			if major, _, _ := strings.Cut(v, "."); atoi(major) < 14 {
+				d.fail("macOS "+v+": tailreach needs macOS 14 (Sonoma) or newer", "update macOS in System Settings → General → Software Update")
+			}
+		}
 		if out, _ := exec.Command("sysctl", "-n", "hw.optional.arm64").Output(); strings.TrimSpace(string(out)) == "1" && runtime.GOARCH == "amd64" {
 			d.warn("Built for Intel, so it runs through Rosetta and uses more CPU while streaming",
 				"`make reload` (it builds for this Mac's CPU), or `mydevices setup` for a Homebrew copy")
@@ -47,14 +59,14 @@ func doctor(args []string) error {
 			out, err := exec.Command("codesign", "-dv", "--verbose=2", b.path).CombinedOutput()
 			switch {
 			case err != nil && strings.Contains(string(out), "No such file"):
-				d.fail(name+" is missing", "make local")
+				d.fail(name+" is missing", setupFix(exe, "`make local`")+" (Homebrew: `brew reinstall tailreach`)")
 			case !strings.Contains(string(out), "Authority=mydevices local") || !strings.Contains(string(out), "Identifier="+b.id):
 				d.fail(name+" isn't signed with \"mydevices local\"", setupFix(exe, "make local (after sh scripts/signing-identity.sh)"))
 			default:
 				d.ok("%s signed", name)
 			}
 		}
-		d.loginItem(exe)
+		d.loginItem(exe, me, restart)
 	}
 
 	d.section("mydevices")
@@ -68,15 +80,20 @@ func doctor(args []string) error {
 		st, err = controlCall(*state, map[string]any{"op": "status"})
 	}
 	if err != nil {
-		if url := signInLink(*state); url != "" {
-			d.fail("Waiting for Tailscale sign-in", "open "+url+" and approve it with your Tailscale account")
-		} else {
-			d.fail("mydevices isn't running", "`./mydevices install --hub --name mac` (or `make setup`); its log: "+filepath.Join(*state, "mydevices.log"))
+		log := filepath.Join(*state, "mydevices.log")
+		switch url := signInLink(*state); {
+		case url != "":
+			d.fail("Waiting for Tailscale sign-in", "open "+url+" and approve it. No Tailscale account? That page makes one, free.\n"+
+				"        Then install the Tailscale app on your phone and sign in with the same account.")
+		case lastError(log) != "":
+			d.fail("mydevices stopped with an error: "+lastError(log), "fix that, then "+restart+". The whole log: "+log)
+		default:
+			d.fail("mydevices isn't running", setupFix(exe, "`./mydevices install --hub --name mac` (or `make setup`)")+"; its log: "+log)
 		}
 		return d.done()
 	}
 	if v, _ := st["version"].(string); v != "" && v != version {
-		d.warn(fmt.Sprintf("The running mydevices is %s, this one is %s", v, version), "make reload")
+		d.warn(fmt.Sprintf("The running mydevices is %s, this one is %s", v, version), restart)
 	}
 	if b, _ := st["debug"].(bool); b {
 		d.warn("Debug logging is on (a DEBUG=1 build)", "`make reload` for a normal build")
@@ -85,13 +102,21 @@ func doctor(args []string) error {
 	if b, _ := st["https"].(bool); b {
 		d.ok("HTTPS certificates on")
 	} else {
-		d.fail("HTTPS certificates are off for this tailnet: browsers can't connect", "turn on MagicDNS and HTTPS at https://login.tailscale.com/admin/dns, then `make reload`")
+		d.fail("HTTPS certificates are off for this tailnet: browsers can't connect", "turn on MagicDNS and HTTPS Certificates at https://login.tailscale.com/admin/dns, then "+restart)
+	}
+	switch n, ok := st["ownDevices"].(float64); {
+	case !ok: // an older mydevices that doesn't say
+	case n == 0:
+		d.fail("No other device of yours is on this tailnet: nothing can view this Mac yet",
+			"install the Tailscale app on your phone, tablet or laptop and sign in with "+fmt.Sprint(st["owner"]))
+	case n > 0:
+		d.ok("%d other device(s) of yours on the tailnet", int(n))
 	}
 	if b, _ := st["managesLogin"].(bool); b {
 		if set, _ := st["passwordSet"].(bool); set {
 			d.ok("Device password set")
 		} else {
-			d.warn("No device password: new devices sign in with a 6-digit code shown on this Mac", "run `./mydevices password` yourself (not an agent: it's your password)")
+			d.warn("No device password: new devices sign in with a 6-digit code shown on this Mac", "run `"+me+" password` yourself (not an agent: it's your password)")
 		}
 	}
 	if b, _ := st["screenSharing"].(bool); b {
@@ -105,13 +130,13 @@ func doctor(args []string) error {
 		p, err := controlCall(*state, map[string]any{"op": "diag", "ask": *ask})
 		switch {
 		case err != nil:
-			d.fail("Couldn't ask the capture helper: "+err.Error(), "make reload, then try again")
+			d.fail("Couldn't ask the capture helper: "+err.Error(), restart+", then try again")
 		case p["error"] != nil:
-			d.fail(fmt.Sprint(p["error"]), "make local && make reload")
+			d.fail(fmt.Sprint(p["error"]), rebuild)
 		case p["busy"] == true:
 			fmt.Println("  – Not checked: someone is viewing right now. Run it again when nobody is.")
 		default:
-			fix := "System Settings → Privacy & Security → %s: switch on mydevices, then `make reload`. Not listed? `./mydevices doctor --ask`"
+			fix := "System Settings → Privacy & Security → %s: switch on mydevices, then " + restart + ". Not listed? `" + me + " doctor --ask`"
 			if b, _ := p["screen"].(bool); b {
 				d.ok("Screen Recording")
 			} else {
@@ -147,10 +172,10 @@ func setupFix(exe, checkout string) string {
 }
 
 // loginItem checks that the LaunchAgent exists, runs this very binary and is running.
-func (d *checkup) loginItem(exe string) {
+func (d *checkup) loginItem(exe, me, restart string) {
 	out, err := exec.Command("plutil", "-extract", "ProgramArguments.0", "raw", "-o", "-", plistPath()).Output()
 	if err != nil {
-		d.fail("Doesn't start at login", "`./mydevices install --hub --name mac` (or `make setup`)")
+		d.fail("Doesn't start at login", setupFix(exe, "`./mydevices install --hub --name mac` (or `make setup`)"))
 		return
 	}
 	if got := strings.TrimSpace(string(out)); got != launchPath(exe) {
@@ -169,7 +194,7 @@ func (d *checkup) loginItem(exe string) {
 		d.running = true
 		d.ok("Starts at login, running")
 	} else {
-		d.fail("The login item isn't running", "make reload; if it keeps stopping, read the end of the log")
+		d.fail("The login item isn't running", restart+"; if it keeps stopping, `"+me+" doctor` shows the error from its log")
 	}
 }
 
@@ -186,6 +211,27 @@ func signInLink(stateDir string) string {
 		}
 		if _, url, ok := strings.Cut(lines[i], "Sign in to Tailscale to add this device: "); ok {
 			return strings.TrimSpace(url)
+		}
+	}
+	return ""
+}
+
+func atoi(s string) int { n, _ := strconv.Atoi(s); return n }
+
+// lastError is the error a failed start left at the end of the log ("mydevices: …"),
+// unless it started fine after that.
+func lastError(logPath string) string {
+	b, err := os.ReadFile(logPath)
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	for i := len(lines) - 1; i >= 0 && i >= len(lines)-100; i-- {
+		if strings.Contains(lines[i], "✓ Signed in as") {
+			return ""
+		}
+		if e, ok := strings.CutPrefix(lines[i], "mydevices: "); ok {
+			return e
 		}
 	}
 	return ""
@@ -224,11 +270,23 @@ func (d *checkup) fail(what, fix string) {
 	fmt.Printf("  ✗ %s\n      → %s\n", what, fix)
 }
 
+// stuckHelp is the way out when a fix doesn't work: a coding agent with the repo's own
+// setup guide, or an issue.
+func stuckHelp() {
+	fmt.Println(`
+Stuck? Let a coding agent (Claude Code, Codex, Cursor…) finish it with you:
+  git clone https://github.com/TanmayDoesAI/tailreach && cd tailreach
+  then ask it: "Set up tailreach on this Mac by following SETUP.md. Stop and tell me
+  whenever I need to do something myself."
+Or open an issue, with this output: https://github.com/TanmayDoesAI/tailreach/issues`)
+}
+
 func (d *checkup) done() error {
 	fmt.Println()
 	switch {
 	case d.failed > 0:
 		fmt.Printf("%d to fix, %d to consider.\n", d.failed, d.warned)
+		stuckHelp()
 		os.Exit(1)
 	case d.warned > 0:
 		fmt.Printf("Working. %d to consider.\n", d.warned)
