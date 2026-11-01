@@ -34,7 +34,7 @@ import (
 	"tailscale.com/tsnet"
 )
 
-const version = "0.1.0"
+const version = "0.1.1"
 
 //go:embed all:web
 var embedded embed.FS
