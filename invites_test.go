@@ -91,7 +91,7 @@ func TestInviteCodeRateLimit(t *testing.T) {
 	code, _, _ := s.add("friend@example.com", 24*time.Hour, false)
 	for i := 1; i <= codeTries; i++ {
 		_, err := s.redeem("friend@example.com", "AAAA-AAAA")
-		if i < codeTries && err != errBadCode || i == codeTries && err != errCodeLocked {
+		if i < codeTries && err != errBadCode || i == codeTries && err != errJustLocked {
 			t.Fatalf("try %d: %v", i, err)
 		}
 	}

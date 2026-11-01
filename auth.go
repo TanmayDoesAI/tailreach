@@ -292,7 +292,7 @@ func (a *app) redeemInvite(w http.ResponseWriter, r *http.Request) {
 	inv, err := a.invites.redeem(g.Login, body.Code)
 	if err != nil {
 		a.audit("invite-code-failed", who, err.Error())
-		if err == errCodeLocked {
+		if err == errJustLocked {
 			notify("Invite code locked for 10 minutes", "too many wrong codes from "+g.Login)
 		}
 		http.Error(w, err.Error(), http.StatusForbidden)

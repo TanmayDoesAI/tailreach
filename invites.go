@@ -59,6 +59,7 @@ var (
 	errNoInvite   = errors.New("no invite for this account, or it has ended")
 	errBadCode    = errors.New("wrong or used invite code")
 	errCodeLocked = errors.New("too many wrong codes, try again in 10 minutes")
+	errJustLocked = errors.New("too many wrong codes, try again in 10 minutes") // this try locked it: worth telling the Mac once
 )
 
 func newInviteStore(dir string) *inviteStore {
@@ -187,7 +188,7 @@ func (s *inviteStore) redeem(login, code string) (invite, error) {
 	if !ok {
 		s.tries[k] = append(s.tries[k], now)
 		if len(s.tries[k]) >= codeTries {
-			return invite{}, errCodeLocked
+			return invite{}, errJustLocked
 		}
 		return invite{}, errBadCode
 	}
