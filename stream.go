@@ -42,6 +42,17 @@ var allowedCmds = map[string]bool{
 	"extend": true, "unextend": true, // handled in the server (vdisplay.go), never sent to the helper
 }
 
+// What a view-only guest may send: keeping the stream going, nothing that reaches the
+// Mac's input, clipboard, files or displays. Everything else is dropped (deny by default).
+var viewOnlyCmds = map[string]bool{
+	"kf": true, "resend": true, "ping": true, "spong": true, "bye": true, "vstats": true, "dlog": true,
+}
+
+// mayForward is forward's first check: may this viewer send command t at all?
+func mayForward(t string, viewOnly bool) bool {
+	return !viewOnly || viewOnlyCmds[t]
+}
+
 func helperPath() string {
 	exe, _ := os.Executable()
 	exe, _ = filepath.EvalSymlinks(exe)
@@ -86,11 +97,15 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 	// the Mac and asks again with ?take=1 if the person chooses to take over. The same
 	// device reconnecting (a network blip, a second tab) just replaces its old stream.
 	viewer := a.viewerName(r)
+	guest, viewOnly := "", false
+	if g := guestOf(r); g != nil {
+		guest, viewOnly = g.Login, g.ViewOnly
+	}
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
-	var kicked atomic.Bool                  // another viewer took over: this stream may no longer touch the helper
-	var detachNow atomic.Pointer[func()]    // set once attached to the helper
-	by, release := claimStream(viewer, r.URL.Query().Get("take") == "1", func(by string) {
+	var kicked atomic.Bool               // another viewer took over: this stream may no longer touch the helper
+	var detachNow atomic.Pointer[func()] // set once attached to the helper
+	by, release := claimStream(viewer, guest != "", r.URL.Query().Get("take") == "1", func(by string) {
 		kicked.Store(true)
 		if d := detachNow.Load(); d != nil {
 			(*d)()
@@ -104,7 +119,7 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer release()
-	defer trackSession("stream", viewer, cancel, false)()
+	defer trackSession("stream", viewer, guest, cancel, false)()
 	extViewerJoined()
 	defer extViewerLeft()
 	vncViewerJoined()
@@ -114,6 +129,15 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("▶ stream started for %s", viewer)
 	a.audit("stream-start", viewer, "")
+	if guest != "" { // the person at the Mac always knows a guest is looking
+		mode := "can control this Mac"
+		if viewOnly {
+			mode = "view only"
+		}
+		a.audit("guest-stream-start", guest, mode)
+		notify("Guest connected: "+guest, mode)
+		defer a.audit("guest-stream-end", guest, "")
+	}
 	start := time.Now()
 	defer func() {
 		log.Printf("■ stream ended for %s after %s", viewer, time.Since(start).Round(time.Second))
@@ -196,6 +220,9 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 		case 3: // JSON event
 			var ev struct{ T string }
 			json.Unmarshal(buf[1:], &ev)
+			if ev.T == "clip" && viewOnly {
+				return // the Mac's clipboard isn't for view-only guests
+			}
 			if ev.T == "cursor" {
 				if s := viaRTC(); s != nil && s.sendMove(buf[1:]) {
 					return // 60 times a second: newest wins, never queued behind anything
@@ -366,6 +393,9 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		t, _ := c["t"].(string)
+		if !mayForward(t, viewOnly) {
+			return // view-only guest: no input, clipboard, files or displays
+		}
 		switch {
 		case t == "spong": // reply to the rate controller's path probe (rtc.go probeLoop)
 			if s := rtc.Load(); s != nil {
@@ -512,6 +542,11 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 			}
 			c["br"] = min(bitrate.Load(), maxBitrate.Load())
 			c["viewer"] = viewer
+			delete(c, "guest") // only ever set here, never by the viewer
+			delete(c, "viewOnly")
+			if guest != "" { // the Mac's panel names the guest
+				c["guest"], c["viewOnly"] = guest, viewOnly
+			}
 			dlog("start: %vx%v at %v fps, display %v, max %d kbps, WebRTC first %v",
 				c["w"], c["h"], c["fps"], c["display"], maxBitrate.Load()/1000, first)
 			toHelper(c)
@@ -522,14 +557,19 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 }
 
 // viewerName is the tailnet device on the other end (as forwarded by the hub, if any).
+// A guest is named by their login too, so logs, the settings window and "in use" say so.
 func (a *app) viewerName(r *http.Request) string {
 	if v := r.Header.Get("X-Tailreach-Viewer"); v != "" && a.auth2 == nil && a.fromHub(r) {
 		return v
 	}
+	name := "unknown device"
 	if wi, err := a.lc.WhoIs(r.Context(), r.RemoteAddr); err == nil && wi.Node != nil {
-		return wi.Node.ComputedName
+		name = wi.Node.ComputedName
 	}
-	return "unknown device"
+	if g := guestOf(r); g != nil {
+		return "guest " + g.Login + " (" + name + ")"
+	}
+	return name
 }
 
 // notify shows a macOS notification on this machine.
@@ -570,12 +610,22 @@ func (a *app) watchAuth(ctx context.Context, r *http.Request, cancel func()) {
 			return
 		case <-t.C:
 		}
-		if !a.passwordOK(r) || !a.auth2.valid(r) {
+		if !a.stillSignedIn(r) {
 			log.Printf("■ stream ended: sign-in no longer valid")
 			cancel()
 			return
 		}
 	}
+}
+
+// stillSignedIn re-checks a request's sign-in: the owner's password trust and session, or
+// a guest's invite (removed, ended or changed means out) and their own session.
+func (a *app) stillSignedIn(r *http.Request) bool {
+	if g := guestOf(r); g != nil {
+		inv, ok := a.invites.get(g.Login)
+		return ok && inv.ViewOnly == g.ViewOnly && a.auth2.validFor(r, g.Login)
+	}
+	return a.passwordOK(r) && a.auth2.valid(r)
 }
 
 // The streams open right now, so a second device can be told about the first instead of
@@ -588,21 +638,20 @@ var streamReg struct {
 
 type regStream struct {
 	viewer string
+	guest  bool
 	kick   func(by string)
 }
 
 // claimStream registers a stream unless a different device already has the Mac (and this
-// isn't a takeover), in which case it returns that device's name. Checking, kicking the
-// old streams and registering happen under one lock, so two devices connecting at once
-// can't both end up registered.
-func claimStream(viewer string, take bool, kick func(string)) (busyBy string, release func()) {
+// isn't a takeover), in which case it returns that device's name. A guest can never take
+// the Mac from the owner. Checking, kicking the old streams and registering happen under
+// one lock, so two devices connecting at once can't both end up registered.
+func claimStream(viewer string, guest, take bool, kick func(string)) (busyBy string, release func()) {
 	streamReg.Lock()
 	defer streamReg.Unlock()
-	if !take {
-		for _, s := range streamReg.m {
-			if s.viewer != viewer {
-				return s.viewer, nil
-			}
+	for _, s := range streamReg.m {
+		if s.viewer != viewer && (!take || guest && !s.guest) {
+			return s.viewer, nil
 		}
 	}
 	for _, s := range streamReg.m {
@@ -613,7 +662,7 @@ func claimStream(viewer string, take bool, kick func(string)) (busyBy string, re
 	}
 	streamReg.next++
 	id := streamReg.next
-	streamReg.m[id] = regStream{viewer, kick}
+	streamReg.m[id] = regStream{viewer, guest, kick}
 	return "", func() {
 		streamReg.Lock()
 		delete(streamReg.m, id)

@@ -37,6 +37,10 @@ func (a *app) receiveFile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
+	if g := guestOf(r); g != nil && g.ViewOnly {
+		http.Error(w, "view only: sending files isn't allowed", http.StatusForbidden)
+		return
+	}
 	if streamsBlocked() {
 		http.Error(w, "stopped on the Mac", http.StatusLocked)
 		return

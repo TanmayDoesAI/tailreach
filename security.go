@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -226,6 +227,7 @@ type liveSession struct {
 	ID      int64     `json:"id"`
 	Kind    string    `json:"kind"` // "stream" | "vnc"
 	Viewer  string    `json:"viewer"`
+	Guest   string    `json:"guest,omitempty"` // the guest's login, if it's a guest
 	Started time.Time `json:"started"`
 	cancel  context.CancelFunc
 }
@@ -236,8 +238,9 @@ var live = struct {
 	m    map[int64]*liveSession
 }{m: map[int64]*liveSession{}}
 
-// trackSession registers a session; exclusive=true ends other sessions of the same kind.
-func trackSession(kind, viewer string, cancel context.CancelFunc, exclusive bool) func() {
+// trackSession registers a session (guest = the guest's login, or ""); exclusive=true
+// ends other sessions of the same kind.
+func trackSession(kind, viewer, guest string, cancel context.CancelFunc, exclusive bool) func() {
 	live.Lock()
 	defer live.Unlock()
 	if exclusive {
@@ -249,11 +252,38 @@ func trackSession(kind, viewer string, cancel context.CancelFunc, exclusive bool
 	}
 	live.next++
 	id := live.next
-	live.m[id] = &liveSession{ID: id, Kind: kind, Viewer: viewer, Started: time.Now(), cancel: cancel}
+	live.m[id] = &liveSession{ID: id, Kind: kind, Viewer: viewer, Guest: guest, Started: time.Now(), cancel: cancel}
 	return func() {
 		live.Lock()
 		delete(live.m, id)
 		live.Unlock()
+	}
+}
+
+// endGuest signs a guest out and ends whatever they have open, at once: their invite was
+// removed or has ended.
+func (a *app) endGuest(login string) {
+	if a.auth2 != nil {
+		a.auth2.dropGuestSessions(login)
+	}
+	live.Lock()
+	defer live.Unlock()
+	for _, s := range live.m {
+		if s.Guest != "" && loginKey(s.Guest) == loginKey(login) {
+			s.cancel()
+		}
+	}
+}
+
+// expireInvites ends invites as they run out (watchAuth also re-checks open streams).
+func (a *app) expireInvites() {
+	for {
+		for _, inv := range a.invites.prune() {
+			log.Printf("■ Invite for %s ended", inv.Login)
+			a.audit("invite-expired", inv.Login, "")
+			a.endGuest(inv.Login)
+		}
+		time.Sleep(30 * time.Second)
 	}
 }
 
@@ -380,7 +410,7 @@ func (a *app) control(req map[string]any) map[string]any {
 		tok := base64.RawURLEncoding.EncodeToString(randBytes(32))
 		now := time.Now()
 		a.auth2.mu.Lock()
-		a.auth2.sessions[tokenHash(tok)] = &session{created: now.Add(15*time.Minute - sessionMaxAge), seen: now, device: "test tool"}
+		a.auth2.sessions[tokenHash(tok)] = &session{created: now, seen: now, expires: now.Add(15 * time.Minute), device: "test tool"}
 		a.auth2.mu.Unlock()
 		cookies := sessionCookie + "=" + tok
 		// If a device password is on, also trust the tool's tailnet IP for 15 minutes.
@@ -418,6 +448,49 @@ func (a *app) control(req map[string]any) map[string]any {
 			res["downloads"] = downloadsWritable()
 		}
 		return res
+	case "invite": // `tailreach invite` and the settings window: let a guest in for a while
+		if a.invites == nil {
+			return map[string]any{"error": "Guests are invited on the hub (or a Mac running on its own), not on a Mac behind a hub."}
+		}
+		login, _ := req["login"].(string)
+		hours, _ := req["hours"].(float64)
+		viewOnly, _ := req["viewOnly"].(bool)
+		if hours < 0 || hours > inviteMax.Hours() {
+			return map[string]any{"error": "An invite lasts 1 to 720 hours (30 days)."}
+		}
+		if l := loginKey(login); l == loginKey(a.owner) {
+			return map[string]any{"error": "That's this Mac's own Tailscale account: it already has access."}
+		} else if a.allow[strings.TrimSpace(login)] {
+			return map[string]any{"error": "That account already has full access (--allow)."}
+		}
+		code, inv, err := a.invites.add(login, time.Duration(hours*float64(time.Hour)), viewOnly)
+		if err != nil {
+			return map[string]any{"error": err.Error()}
+		}
+		a.endGuest(inv.Login) // a new invite starts afresh: earlier sessions and the old code end
+		mode := "can control"
+		if inv.ViewOnly {
+			mode = "view only"
+		}
+		a.audit("invite-created", inv.Login, mode+", until "+inv.Expires.Format(time.RFC3339))
+		log.Printf("✓ Invited %s until %s (%s)", inv.Login, inv.Expires.Format("Jan 2 15:04"), mode)
+		st := a.control(map[string]any{"op": "status"})
+		host, _, _ := strings.Cut(a.selfDNS, ".")
+		addr := "https://" + a.selfDNS + "/"
+		if a.opt.hub {
+			addr += a.opt.name + "/"
+		}
+		st["invited"] = map[string]any{"login": inv.Login, "code": code, "expires": inv.Expires, "viewOnly": inv.ViewOnly,
+			"address": addr, "machine": host, "admin": "https://login.tailscale.com/admin/machines"}
+		return st
+	case "uninvite":
+		login, _ := req["login"].(string)
+		if a.invites == nil || !a.invites.remove(login) {
+			return map[string]any{"error": "No invite for " + login + "."}
+		}
+		a.audit("invite-removed", login, "")
+		log.Printf("■ Invite for %s removed", login)
+		a.endGuest(login)
 	case "stopSessions":
 		stopAllSessions()
 		if a.auth2 != nil {
@@ -469,6 +542,10 @@ func (a *app) control(req map[string]any) map[string]any {
 	st["version"] = version
 	st["debug"] = debugLog
 	st["ownDevices"] = a.ownDevices()
+	st["invites"] = []invite{}
+	if a.invites != nil {
+		st["invites"] = a.invites.active()
+	}
 	return st
 }
 
