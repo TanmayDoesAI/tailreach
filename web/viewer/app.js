@@ -33,6 +33,7 @@ const settings = {
   barMini: store.get('barMini', false),  // folded down to just its grip
   codec: store.get('codec', 'auto'),     // 'auto' = HEVC when this browser can play it, else H.264
   audio: store.get('audio', false),      // the Mac's sound: off unless switched on (WebRTC only)
+  direct: store.get('direct', true),     // direct video: decode WebRTC frames ourselves, skipping the jitter buffer
 };
 document.body.classList.toggle('bar-mini', settings.barMini);
 
@@ -89,6 +90,8 @@ async function boot() {
     return setTimeout(boot, 3000);
   }
   hevc = settings.codec === 'auto' && await canHevc();
+  directCfg = await directConfig();
+  markDirect();
   connect();
 }
 
@@ -345,7 +348,9 @@ async function startRTC(keepPicture = false) {
   if (!rtcWanted()) return;
   stopRTC(false, keepPicture);
   try {
-    pc = new RTCPeerConnection({ iceServers: [] });   // tailnet only: no STUN/TURN
+    // tailnet only: no STUN/TURN. Direct video in Chrome needs the encoded-streams switch.
+    pc = new RTCPeerConnection({ iceServers: [], ...(directHow() === 'streams' && { encodedInsertableStreams: true }) });
+    if (directHow() === 'transform') await directWorkerReady();
     const tr = pc.addTransceiver('video', { direction: 'recvonly' });
     if (settings.audio) pc.addTransceiver('audio', { direction: 'recvonly' });
     inputDC = pc.createDataChannel('input');
@@ -358,6 +363,7 @@ async function startRTC(keepPicture = false) {
     } catch {}
     pc.ontrack = (e) => {
       if (e.track.kind === 'audio') { sound.srcObject = new MediaStream([e.track]); playSound(); return; }
+      startDirect(e.receiver);
       try { e.receiver.jitterBufferTarget = 0; } catch {}   // show frames as soon as they're decodable
       try { e.receiver.playoutDelayHint = 0; } catch {}
       video.srcObject = new MediaStream([e.track]);
@@ -400,6 +406,7 @@ let rtcReoffers = 0;
 let rtcLive = false;   // frames are arriving over the current connection
 function reofferRTC() {
   if (!ws || ws.readyState !== 1) return;   // the WebSocket reconnect starts WebRTC itself
+  if (!directOn) directGiveUp('no frame before WebRTC dropped');   // never leave a stalled transform in the way
   if (rtcReoffers++ >= 2) return fallbackToWS();
   dlog('webrtc re-offer, try', rtcReoffers);
   setState('connecting', 'Reconnecting');
@@ -408,6 +415,7 @@ function reofferRTC() {
 
 function fallbackToWS() {
   if (!pc) return;
+  directGiveUp('WebRTC fell back');
   dlog('webrtc gave up: video on the WebSocket; next try in', 5 * 2 ** rtcRetries, 's');
   stopRTC(true);
   // Video carries on over the WebSocket; try WebRTC again a little later (backing off).
@@ -416,6 +424,7 @@ function fallbackToWS() {
 }
 
 function stopRTC(tellServer, keepPicture = false) {
+  stopDirect();
   clearTimeout(rtcTimer);
   clearTimeout(rtcStall);
   inputDC = moveDC = null;
@@ -428,6 +437,132 @@ function stopRTC(tellServer, keepPicture = false) {
   if (keepPicture && document.body.classList.contains('rtc')) return;   // last frame stays up, dimmed
   video.srcObject = null;
   document.body.classList.remove('rtc');
+}
+
+// ---------- direct video ----------
+// Parsec-style: show each frame the moment it's decoded. WebRTC hands every complete frame
+// to us (encoded streams in Chrome and Edge, RTCRtpScriptTransform in Safari and Firefox)
+// before its jitter buffer; WebCodecs decodes it on the GPU and it's drawn on the
+// low-latency canvas, the same renderer the WebSocket path uses. The <video> keeps playing,
+// hidden: its decoder notices lost frames and asks the Mac for a keyframe, which reaches
+// ours too.
+let directDec = null, directWorker = null, directOn = false, directKey = true, directAsked = 0;
+let directCfg = null;    // the decoder setup this browser takes, or null: no direct video
+let directErrors = [];   // recent decoder failures; too many and this session goes back to <video>
+
+// No description: WebRTC frames are Annex B, with the parameter sets in each keyframe.
+async function directConfig() {
+  if (!settings.direct || !window.VideoDecoder) return null;
+  for (const hardwareAcceleration of ['prefer-hardware', 'no-preference']) {
+    const cfg = { codec: hevc ? 'hvc1.1.6.L153.B0' : 'avc1.640034', optimizeForLatency: true, hardwareAcceleration };
+    try { if ((await VideoDecoder.isConfigSupported(cfg)).supported) return cfg; } catch {}
+  }
+  return null;
+}
+
+function directHow() {
+  if (!directCfg) return '';
+  // Chrome has both, but passes no frames through a script transform on a receiver here.
+  if (window.RTCRtpReceiver?.prototype.createEncodedStreams) return 'streams';
+  if (window.RTCRtpScriptTransform) return 'transform';
+  return '';
+}
+
+function startDirect(receiver) {
+  const how = directHow();
+  if (!how || receiver.track.kind !== 'video') return;
+  try {
+    if (how === 'transform') {
+      if (!directWorker) return;
+      receiver.transform = new RTCRtpScriptTransform(directWorker, {});
+    } else {
+      const { readable, writable } = receiver.createEncodedStreams();
+      readable.pipeThrough(new TransformStream({
+        transform(frame, out) {
+          directFeed({ data: frame.data.slice(0), key: frame.type === 'key', ts: frame.timestamp });
+          out.enqueue(frame);
+        },
+      })).pipeTo(writable).catch(() => {});
+    }
+    dlog('direct video:', how);
+  } catch (err) { dlog('direct video unavailable', String(err)); stopDirect(); }
+}
+
+// The worker must be running before the transform is attached, and the transform attached
+// as the connection is set up: Chrome passes no frames through one attached later.
+function directWorkerReady() {
+  return new Promise((resolve) => {
+    const w = directWorker = new Worker('rtcworker.js');
+    const t = setTimeout(resolve, 1000);
+    w.onmessage = (e) => {
+      if (e.data.ready) { clearTimeout(t); resolve(); } else if (w === directWorker) directFeed(e.data);
+    };
+  });
+}
+
+function directFeed({ data, key, ts }) {
+  if (!directCfg) return;
+  if (!directDec) {
+    // Joined mid-stream (the transform starts a moment after the video): ask for a keyframe.
+    if (!key) { if (performance.now() - directAsked > 1000) { directAsked = performance.now(); send({ t: 'kf' }); } return; }
+    directDec = new VideoDecoder({ output: directFrame, error: directFailed });
+    directDec.configure(directCfg);
+  }
+  if (directKey && !key) return;
+  // A device that can't keep up skips ahead instead of falling behind.
+  if (directDec.decodeQueueSize > 3 && !key) { directKey = true; send({ t: 'kf' }); return; }
+  directKey = false;
+  directDec.decode(new EncodedVideoChunk({ type: key ? 'key' : 'delta', timestamp: Math.round(ts / 0.09), data }));
+}
+
+function directFrame(frame) {
+  if (canvas.width !== frame.displayWidth || canvas.height !== frame.displayHeight) {
+    canvas.width = frame.displayWidth;
+    canvas.height = frame.displayHeight;
+    layout();
+  }
+  if (!directOn) { directOn = true; document.body.classList.add('direct'); markDirect(); }
+  // Drawn the moment it's decoded, not at the next animation frame: the canvas is
+  // desynchronized, so it reaches the screen without waiting for the page's own refresh.
+  pendingFrame?.close();
+  pendingFrame = frame;
+  paint();
+}
+
+function directFailed(err) {
+  dlog('direct decoder', String(err));
+  directDec = null;
+  directKey = true;
+  const now = performance.now();
+  directErrors = directErrors.filter((t) => now - t < 10000).concat(now);
+  if (directErrors.length >= 3) return directGiveUp('decoder keeps failing');   // the <video> carries on by itself
+  send({ t: 'kf' });
+}
+
+// Direct video off for the rest of this page's life: the plain <video> path is always there.
+// Frames still pass through a running worker to the <video>; the next connection has none.
+function directGiveUp(why) {
+  if (!directCfg) return;
+  dlog('direct video off for this session:', why);
+  directCfg = null;
+  directOn = false;
+  document.body.classList.remove('direct');
+  markDirect();
+}
+
+function markDirect() {
+  const el = $('#directState');
+  if (el) el.textContent = !settings.direct ? 'Off' : directOn ? 'Active: frames are shown as soon as they’re decoded'
+    : directCfg ? 'Waiting for video' : 'Not available in this browser';
+}
+
+function stopDirect() {
+  try { directDec?.close(); } catch {}
+  directWorker?.terminate();
+  directDec = directWorker = null;
+  directKey = true;
+  directOn = false;
+  document.body.classList.remove('direct');
 }
 
 // The Mac's sound, when switched on. Browsers only start sound from a tap, so the switch's
@@ -459,7 +594,7 @@ let frameGen = 0;
 
 function onVideoFrame(now, meta, polled, gen) {
   if (!video.srcObject || (!polled && gen !== frameGen)) return;
-  if (!polled) stats.frames++;
+  if (!polled && !directOn) stats.frames++;   // direct video counts its own, as it draws them
   if (canvas.width !== meta.width || canvas.height !== meta.height) {
     canvas.width = meta.width;   // canvas carries the stream size for layout, cursor and input maths
     canvas.height = meta.height;
@@ -1614,6 +1749,9 @@ $('#speed').value = settings.speed;
 $('#natural').checked = settings.natural;
 $('#speed').addEventListener('input', (e) => { settings.speed = +e.target.value; store.set('speed', settings.speed); });
 $('#natural').addEventListener('change', (e) => { settings.natural = e.target.checked; store.set('natural', settings.natural); });
+$('#direct').checked = settings.direct;
+$('#direct').addEventListener('change', (e) => { store.set('direct', e.target.checked); location.reload(); });
+markDirect();
 $('#sound').checked = settings.audio;
 $('#sound').addEventListener('change', (e) => {
   settings.audio = e.target.checked;

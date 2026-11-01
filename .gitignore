@@ -22,3 +22,5 @@ tailscaled.*
 .env
 /mydevices
 /mydevices-capture
+/docs/demo/
+/.claude/worktrees/

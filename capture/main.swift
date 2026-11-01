@@ -70,6 +70,24 @@ func log(_ s: String) {
 private let dlogTime: DateFormatter = { let f = DateFormatter(); f.dateFormat = "HH:mm:ss"; return f }()
 #endif
 
+/// Debug builds: how long frames wait in capture and in the encoder, summarised every 2 s.
+#if DEBUG_LOG
+final class Lag {
+    private var cap: [Double] = [], enc: [Double] = [], at = Date()
+    private let lock = NSLock()
+    func add(capture: Double? = nil, encode: Double? = nil) {
+        lock.lock(); defer { lock.unlock() }
+        if let capture { cap.append(capture * 1000) }
+        if let encode { enc.append(encode * 1000) }
+        guard Date().timeIntervalSince(at) > 2 else { return }
+        func p(_ a: [Double], _ f: Double) -> Int { a.isEmpty ? -1 : Int(a.sorted()[min(a.count - 1, Int(f * Double(a.count)))]) }
+        dlog("lag ms: capture p50 \(p(cap, 0.5)) p95 \(p(cap, 0.95)) · encode p50 \(p(enc, 0.5)) p95 \(p(enc, 0.95)) · \(cap.count / 2) fps")
+        cap = []; enc = []; at = Date()
+    }
+}
+let lag = Lag()
+#endif
+
 // MARK: - Encoder (VideoToolbox, hardware H.264 or HEVC, low-latency rate control)
 
 final class Encoder {
@@ -139,9 +157,15 @@ final class Encoder {
             props = [kVTEncodeFrameOptionKey_ForceKeyFrame: kCFBooleanTrue] as CFDictionary
             forceKey = false
         }
+        #if DEBUG_LOG
+        let t0 = CACurrentMediaTime()
+        #endif
         VTCompressionSessionEncodeFrame(s, imageBuffer: pb, presentationTimeStamp: pts, duration: .invalid,
                                         frameProperties: props, infoFlagsOut: nil) { [weak self] status, _, sb in
             guard status == noErr, let sb else { return }
+            #if DEBUG_LOG
+            lag.add(encode: CACurrentMediaTime() - t0)
+            #endif
             self?.output(sb)
         }
     }
@@ -401,6 +425,9 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         lastPB = pb
         lastFrameAt = Date()
         refinements = 0
+        #if DEBUG_LOG
+        lag.add(capture: (CMClockGetTime(CMClockGetHostTimeClock()) - sb.presentationTimeStamp).seconds)
+        #endif
         enc.boost(false)
         enc.encode(pb, pts: sb.presentationTimeStamp)
     }

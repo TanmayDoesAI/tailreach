@@ -5,8 +5,10 @@
 // It puts a borderless, non-activating, always-visible window on the main display that
 // redraws continuously: moving bars (so ScreenCaptureKit emits frames without pause),
 // a frame counter (so dropped frames are visible in recordings) and the host clock in
-// whole milliseconds (so glass-to-glass latency can be measured with a camera pointed
-// at a viewer showing this window next to it). Exits after `seconds` (default 60).
+// whole milliseconds, as text (so glass-to-glass latency can be measured with a camera
+// pointed at a viewer showing this window next to it) and as a strip of 24 black/white
+// cells along the top (so a viewer on the same Mac can read it from each frame it gets).
+// Exits after `seconds` (default 60).
 //
 // Displaying a window needs no macOS permissions; it only draws.
 import AppKit
@@ -44,6 +46,14 @@ final class PatternView: NSView {
 
         // Host clock in ms and the frame counter, big enough to read on a phone photo.
         let ms = Int(t * 1000 + startHostMs)
+
+        // The same clock as 24 black/white cells along the top (MSB first, ms mod 2^24), so a
+        // viewer can read it back from every frame and measure latency without a camera.
+        let cells = 24, cw = bounds.width / CGFloat(cells), ch = bounds.height / 12
+        for i in 0..<cells {
+            ((ms >> (cells - 1 - i)) & 1 == 1 ? NSColor.white : NSColor.black).setFill()
+            NSRect(x: CGFloat(i) * cw, y: bounds.height - ch, width: cw, height: ch).fill()
+        }
         let para = NSMutableParagraphStyle()
         para.alignment = .center
         let big = NSFont.monospacedDigitSystemFont(ofSize: bounds.height / 5, weight: .bold)

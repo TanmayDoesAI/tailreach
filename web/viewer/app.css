@@ -50,6 +50,8 @@ svg { width: 20px; height: 20px; flex: none; }
 #video { visibility: hidden; object-fit: fill; background: #000; pointer-events: none; }
 body.rtc #video { visibility: visible; }
 body.rtc #screen { visibility: hidden; }
+body.rtc.direct #video { visibility: hidden; }   /* direct video draws on the canvas instead */
+body.rtc.direct #screen { visibility: visible; }
 #surface { position: fixed; inset: 0; z-index: 5; cursor: none; }   /* the Mac's cursor is drawn for you */
 #cursor { position: fixed; top: 0; left: 0; z-index: 6; pointer-events: none; will-change: transform; }
 body:not([data-state="on"]) #cursor, body.locked #cursor { display: none; }
