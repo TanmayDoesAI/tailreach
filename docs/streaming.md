@@ -1,6 +1,6 @@
 # How the stream works
 
-This note is for anyone changing the video path. It explains what the code in `stream.go`, `rtc.go`, `ratectl.go`, `nacklimit.go` and the viewer's WebRTC code does, and why. The design target is a phone on 5G, a link that drops and comes back several times a minute, not a steady Wi-Fi line.
+This note is for anyone changing the video path. It explains what the code in `internal/server/stream.go` and `rtc.go`, `internal/ratectl/` and the viewer's WebRTC code does, and why. The design target is a phone on 5G, a link that drops and comes back several times a minute, not a steady Wi-Fi line.
 
 ## The path
 

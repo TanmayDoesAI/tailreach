@@ -15,7 +15,7 @@ all: $(TARGETS:%=dist/tailreach-%)
 dist/tailreach-%:
 	@mkdir -p dist
 	GOOS=$(word 1,$(subst -, ,$*)) GOARCH=$(word 2,$(subst -, ,$*)) CGO_ENABLED=0 \
-		go build $(GOTAGS) -trimpath -ldflags '$(LDFLAGS)' -o $@$(if $(findstring windows,$*),.exe,) .
+		go build $(GOTAGS) -trimpath -ldflags '$(LDFLAGS)' -o $@$(if $(findstring windows,$*),.exe,) ./cmd/tailreach
 
 SIGN := tailreach local
 
@@ -24,11 +24,11 @@ SIGN := tailreach local
 # Built for this Mac's own CPU even by an Intel Go on Apple silicon (no Rosetta while streaming).
 NATIVE := $(shell uname -m | sed 's/x86_64/amd64/')
 local: capture
-	CGO_ENABLED=0 GOARCH=$(NATIVE) go build $(GOTAGS) -trimpath -ldflags '$(LDFLAGS)' -o tailreach .
+	CGO_ENABLED=0 GOARCH=$(NATIVE) go build $(GOTAGS) -trimpath -ldflags '$(LDFLAGS)' -o tailreach ./cmd/tailreach
 	codesign --force -s "$(SIGN)" --identifier com.tailreach.agent tailreach
 
 capture:
-	swiftc -O -swift-version 5 $(SWIFTDEBUG) capture/*.swift -o tailreach-capture
+	swiftc -O -swift-version 5 $(SWIFTDEBUG) macos/*.swift -o tailreach-capture
 	codesign --force -s "$(SIGN)" --identifier com.tailreach.capture tailreach-capture
 
 # Set up this Mac: everything that doesn't need you, in order, and safe to run again.
@@ -56,7 +56,7 @@ reload: local
 
 # Live UI hacking: edit files in web/ and refresh the browser
 run:
-	CGO_ENABLED=0 go run $(GOTAGS) . --hub --web-dir ./web $(ARGS)
+	CGO_ENABLED=0 go run $(GOTAGS) ./cmd/tailreach --hub --web-dir ./web $(ARGS)
 
 clean:
 	rm -rf dist tailreach tailreach-capture

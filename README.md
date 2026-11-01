@@ -231,14 +231,14 @@ Run `tailreach doctor` (`./tailreach doctor` in a clone). It checks every step a
 
 | What | Where |
 |---|---|
-| Remote-screen UI (gestures, toolbar, keys) | `web/viewer/index.html`, `app.js`, `app.css` |
-| Stream, input checks, rate steering | `stream.go`, `ratectl.go`, `nacklimit.go` |
-| WebRTC | `rtc.go` |
-| Extended display | `vdisplay.go` |
-| Screen capture, encoder, input injection (Swift) | `capture/*.swift` |
-| Passkeys, sessions, audit log | `auth.go`, `security.go` |
-| Server, auth, relay, discovery | `server.go` |
-| Startup, flags, login | `main.go` |
+| The command (setup, doctor, install, invite) | `cmd/tailreach/` |
+| Remote-screen UI (gestures, toolbar, keys, direct video) | `web/viewer/` |
+| Stream, input checks, WebRTC | `internal/server/stream.go`, `rtc.go` |
+| Rate control and retransmit limits | `internal/ratectl/` |
+| Extended display | `internal/server/vdisplay.go` |
+| Screen capture, encoder, sound, input injection (Swift) | `macos/` |
+| Passkeys, sessions, guests, audit log | `internal/server/auth.go`, `invites.go`, `security.go` |
+| Server, relay, discovery, startup | `internal/server/server.go`, `serve.go` |
 | Dashboard / sign-in pages | `web/dashboard/`, `web/login.html` |
 | Lock-screen VNC fallback | `web/viewer/classic/`, `web/viewer/novnc/` (upstream noVNC 1.7.0, unmodified) |
 | Stream tests on a simulated bad network | `go test ./...`, `tools/streambench` |
@@ -247,7 +247,7 @@ Run `tailreach doctor` (`./tailreach doctor` in a clone). It checks every step a
 Edit the UI live without rebuilding:
 
 ```sh
-go run . --hub --name mac --web-dir ./web   # then just refresh the browser
+go run ./cmd/tailreach --hub --name mac --web-dir ./web   # then just refresh the browser
 ```
 
 Build:

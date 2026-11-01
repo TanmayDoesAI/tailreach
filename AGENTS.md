@@ -4,7 +4,7 @@ This file is read by Codex, Cursor, Gemini CLI and most other coding agents. Cla
 through `CLAUDE.md`.
 
 Remote control of a Mac from an iPhone/iPad browser, over the owner's own Tailscale tailnet.
-Go server with embedded Tailscale (`tsnet`), a Swift capture/input helper, and a plain HTML/JS viewer.
+Go server with embedded Tailscale (`tsnet`), a Swift capture/input helper (`macos/`), and a plain HTML/JS viewer (`web/`).
 
 - **Setting it up for someone:**
   - Run `make setup`, then work through what `./tailreach doctor` reports until it exits 0.
@@ -16,29 +16,30 @@ Go server with embedded Tailscale (`tsnet`), a Swift capture/input helper, and a
 
 | Path | What |
 |---|---|
-| `main.go` | flags, subcommands (`install`, `settings`, `password`, `invite`, `doctor`, `version`), tsnet startup |
-| `setup.go` | `tailreach setup`: signs an installed (Homebrew) copy, login item, doctor; the formula lives in the tap repo [TanmayDoesAI/homebrew-tailreach](https://github.com/TanmayDoesAI/homebrew-tailreach): update its `url` and `sha256` for each release tag |
-| `doctor.go` | `tailreach doctor`: checks the whole setup, prints the fix for each problem |
-| `server.go` | HTTP routes, Tailscale `WhoIs` owner check, hub ↔ device proxy, discovery |
-| `auth.go` | passkeys (WebAuthn), sessions, pairing codes, guest invite-code sign-in, audit log |
-| `invites.go` | guests: expiring invites for other Tailscale logins, one-time codes (hashed, single use, rate limited), `invites.json` |
-| `security.go` | device password (Argon2id), 30-day device trust, live sessions, local control socket |
-| `stream.go` | viewer WebSocket: control, input dispatch (`forward`), WS video/input fallback, bitrate steering |
-| `rtc.go` | WebRTC (pion): video with true capture timestamps, NACK + RTCP reports only; queue probe (`sping`/`spong`); `input` (reliable) and `move` (unordered, no resends) data channels |
-| `ratectl.go`, `nacklimit.go` | the rate controller (cut fast, jump back to the last good rate, probe gently) and the cap on retransmits; see `docs/streaming.md` |
-| `debug*.go` | `dlog` and the `debug` build tag (`make DEBUG=1`) |
-| `vrec.go` | measurement mode: the viewer's own receive stats, logged on the Mac (switched on from the control socket) |
-| `vdisplay*.go` | extended display: a virtual second monitor (private CGVirtualDisplay via `go-macos/virtualdisplay`), child process `tailreach vdisplay` owns it, idle auto-close; never the main display |
-| `files.go` | files sent from the viewer, saved as new files in `~/Downloads` (write-only) |
-| `vnchold.go` | keeps the phone's unlock connection to Screen Sharing open (idle) while anyone views, since macOS re-locks when it ends |
-| `helper.go` | one warm `tailreach-capture` process shared across reconnects |
-| `capture/*.swift` | ScreenCaptureKit + VideoToolbox H.264, CGEvent input, "Screen shared" panel, settings window |
-| `web/viewer/` | the viewer (`app.js`); `classic/` + `novnc/` is the VNC fallback for the lock screen |
-| `web/login.html`, `web/dashboard/` | sign-in and device list |
+| `cmd/tailreach/` | the command: `main.go` (subcommands, then `server.Serve`), `setup.go` (signs an installed copy, login item; the Homebrew formula lives in [TanmayDoesAI/homebrew-tailreach](https://github.com/TanmayDoesAI/homebrew-tailreach): update its `url` and `sha256` for each release tag), `install.go` (LaunchAgent), `doctor.go` (checks everything, prints each fix), `commands.go` (`settings`, `password`, `invite`, over the control socket) |
+| `internal/server/serve.go` | flags, tsnet startup, `Serve` |
+| `internal/server/server.go` | HTTP routes, Tailscale `WhoIs` owner check, hub ↔ device proxy, discovery |
+| `internal/server/auth.go` | passkeys (WebAuthn), sessions, pairing codes, guest invite-code sign-in, audit log |
+| `internal/server/invites.go` | guests: expiring invites for other Tailscale logins, one-time codes (hashed, single use, rate limited), `invites.json` |
+| `internal/server/security.go` | device password (Argon2id), 30-day device trust, live sessions, local control socket |
+| `internal/server/stream.go` | viewer WebSocket: control, input dispatch (`forward`), WS video/input fallback, bitrate steering |
+| `internal/server/rtc.go` | WebRTC (pion): video with true capture timestamps, NACK + RTCP reports only; queue probe (`sping`/`spong`); `input` (reliable) and `move` (unordered, no resends) data channels |
+| `internal/ratectl/` | the rate controller (cut fast, jump back to the last good rate, probe gently) and the cap on retransmits; see `docs/streaming.md` |
+| `internal/server/debug*.go` | `dlog` and the `debug` build tag (`make DEBUG=1`) |
+| `internal/server/vrec.go` | measurement mode: the viewer's own receive stats, logged on the Mac (switched on from the control socket) |
+| `internal/server/vdisplay*.go` | extended display: a virtual second monitor (private CGVirtualDisplay via `go-macos/virtualdisplay`), child process `tailreach vdisplay` owns it, idle auto-close; never the main display |
+| `internal/server/files.go` | files sent from the viewer, saved as new files in `~/Downloads` (write-only) |
+| `internal/server/vnchold.go` | keeps the phone's unlock connection to Screen Sharing open (idle) while anyone views, since macOS re-locks when it ends |
+| `internal/server/helper.go` | one warm `tailreach-capture` process shared across reconnects |
+| `internal/server/migrate.go` | moves an install from before the rename (`mydevices`) over |
+| `macos/*.swift` | `tailreach-capture`: ScreenCaptureKit + VideoToolbox H.264/HEVC, Opus sound, CGEvent input, "Screen shared" panel, settings window |
+| `web/viewer/` | the viewer (`app.js`; `rtcworker.js` is direct video); `classic/` + `novnc/` is the VNC fallback for the lock screen |
+| `web/login.html`, `web/dashboard/` | sign-in and device list (`web/embed.go` builds them into the binary) |
+| `scripts/` | `signing-identity.sh` (the local code-signing identity; embedded for `tailreach setup`) |
 | `tools/streamtest` | end-to-end check over the tailnet (gets a test session from the control socket) |
 | `tools/streambench` | WebRTC benchmark through a simulated bad network (drops, blackouts, rate changes) |
 | `tools/phonetest` | record and summarise a real phone session (with `vrec.go`) |
-| `tools/pattern` | animated test-pattern window, for benchmarking and glass-to-glass latency |
+| `tools/pattern` | animated test-pattern window, for benchmarking and latency (its clock strip can be read from each frame) |
 
 ## Build, run, check
 
@@ -48,7 +49,7 @@ make reload    # build, sign, restart the login item
 make setup     # first-time setup on a Mac (safe to re-run); ends with ./tailreach doctor
 ./tailreach doctor   # what's working, what isn't, and the fix (exit 1 = something to fix)
 go run ./tools/streamtest -rtc -t 6 https://<hub>.<tailnet>.ts.net/<name>/
-CGO_ENABLED=0 GOARCH=arm64 go vet .
+CGO_ENABLED=0 GOARCH=arm64 go vet ./... && CGO_ENABLED=0 GOARCH=arm64 go test ./...
 ```
 
 - **Never run `tailreach-capture` directly, and test against the login item (`make reload`), not a terminal-run hub.**
