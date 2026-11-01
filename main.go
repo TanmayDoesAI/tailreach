@@ -481,7 +481,7 @@ What they need:
      %s → the machine "%s" → ⋯ → Share… → send them the link it makes.
   2. They accept it, signed in to Tailscale as %s, then open
      %s
-  3. On the sign-in page they tap "I have an invite code" and enter:  %s
+  3. The sign-in page asks them for this invite code:  %s
      (one use, and it ends with the invite. Run this again for a new code.)
 
 This Mac shows who's connected while they view. End it any time:

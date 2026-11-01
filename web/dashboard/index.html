@@ -110,7 +110,11 @@
       const r = await fetch('api/devices', { cache: 'no-store' });
       if (r.status === 401) return location.replace('/login?next=/');
       const data = await r.json();
-      document.getElementById('who').textContent = data.owner;
+      // A guest sees just the Mac they were invited to.
+      document.getElementById('who').textContent = data.guest
+        ? `Guest access${data.viewOnly ? ' · view only' : ''} · until ${new Date(data.expires).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}`
+        : data.owner;
+      document.querySelector('.hint').hidden = !!data.guest;
       document.getElementById('list').innerHTML = data.devices.map(row).join('');
     } catch {
       document.getElementById('list').innerHTML = '<div class="empty">Can’t reach the hub.</div>';

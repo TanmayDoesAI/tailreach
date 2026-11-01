@@ -138,6 +138,24 @@ body[data-state="on"] .dot { background: var(--green); }
 body.relayed .dot, body.stale .dot { background: var(--amber); }
 body.stale #screen, body.stale #video { opacity: .7; transition: opacity .3s; }
 
+/* ---------- guests ---------- */
+/* Someone the owner invited. View only: just the screen, so the controls that would send
+   anything to the Mac are hidden (the Mac drops them regardless). */
+#viewOnlyPill {
+  display: none; position: fixed; top: calc(10px + var(--safe-t)); right: calc(10px + env(safe-area-inset-right, 0px)); z-index: 11;
+  height: 26px; padding: 0 10px; align-items: center; border-radius: 999px;
+  background: var(--material); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
+  border: 0.5px solid var(--hairline); color: var(--amber); font-size: 12px; font-weight: 600;
+}
+body.view-only[data-state="on"] #viewOnlyPill { display: flex; }
+body.view-only :is([data-act="keyboard"], [data-act="mode"], [data-mod], [data-key], [data-combo], [data-act="extendPanel"],
+  [data-act="sendFile"], #keys, .space),
+body.view-only #bar span.sep:nth-of-type(-n+3),
+body.view-only #more :is(.actions, .media, .group:has(#clipText), .group:has([data-act="sendFile"]),
+  .item:has([data-set="mode"]), .item:has(#speed), .item:has(#natural)) { display: none !important; }
+/* No guest can unlock the Mac (that takes its owner's password) or take it from its owner. */
+body.guest #unlock :is(input, button, a), body.guest :is([data-act="busyTake"], #busyExt) { display: none !important; }
+
 /* ---------- Space arrows ---------- */
 .space {
   position: fixed; top: 50%; transform: translateY(-50%); z-index: 8;

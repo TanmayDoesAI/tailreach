@@ -282,7 +282,7 @@ struct GuestsSection: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Invite code for \(inv.login): \(inv.code)").font(.body.monospaced().bold()).textSelection(.enabled)
                     Text("1. Share this Mac with them in Tailscale: \(inv.admin) → \"\(inv.machine)\" → ⋯ → Share…, and send them the link.")
-                    Text("2. They accept it, then open \(inv.address) and enter the code under \"I have an invite code\". It works once.")
+                    Text("2. They accept it, then open \(inv.address) and enter the code. It works once.")
                 }
                 .font(.callout).textSelection(.enabled)
             }
