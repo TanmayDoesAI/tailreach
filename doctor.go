@@ -124,6 +124,13 @@ func doctor(args []string) error {
 	} else if mac {
 		d.warn("Screen Sharing is off: you can't unlock the Mac from the phone", "System Settings → General → Sharing → Screen Sharing")
 	}
+	// Guests aren't a problem, just worth knowing about: who else can get in, and until when.
+	if inv, _ := st["invites"].([]any); len(inv) > 0 {
+		first, _ := inv[0].(map[string]any) // soonest to end first
+		end, _ := time.Parse(time.RFC3339Nano, fmt.Sprint(first["expires"]))
+		fmt.Printf("  – %d guest invite(s) running, the first ends %s (`%s invite --list`, `--remove LOGIN`)\n",
+			len(inv), end.Local().Format("Mon Jan 2 15:04"), me)
+	}
 
 	if mac {
 		d.section("Permissions")
