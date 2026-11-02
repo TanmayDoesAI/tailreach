@@ -201,10 +201,21 @@
       await post('auth/register/finish?id=' + id, credJSON(cred));
       mem.set('passkey');
       location.replace(safeNext);
-    } catch (e) { fail(e); }
+    } catch (e) {
+      // InvalidStateError: this device already holds one of this Mac's passkeys (the server
+      // lists them as exclusions). Nothing to set up; remember it so sign-in offers the passkey.
+      if (e.name === 'InvalidStateError') {
+        mem.set('passkey');
+        if (alreadyIn) return location.replace(safeNext);
+        $('#err').textContent = 'This device already has a passkey for your Mac. Go back and use Sign in with passkey.';
+        return;
+      }
+      fail(e);
+    }
   }
-  $('#registerBtn').onclick = register;
-  $('#offerBtn').onclick = register;
+  let alreadyIn = false;   // signed in with the password: the passkey offer is the only step left
+  $('#registerBtn').onclick = () => { alreadyIn = false; register(); };
+  $('#offerBtn').onclick = () => { alreadyIn = true; register(); };
   $('#skipBtn').onclick = () => { mem.set('nopasskey'); location.replace(safeNext); };
   // A passkey is never required when there's a password: skipping just asks for it.
   $('#pairSkipBtn').onclick = () => { mem.set('nopasskey'); show('password'); $('#pw').focus(); };
