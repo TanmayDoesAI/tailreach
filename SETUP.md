@@ -180,8 +180,8 @@ Multi-computer setups are less hardened than a single hub; see "Known gaps" in `
 ## Uninstall
 
 ```sh
-./tailreach uninstall
-rm -rf ~/Library/Application\ Support/tailreach   # forgets the Tailscale node, passwords, passkeys
+./tailreach uninstall          # stops it and removes the login item
+./tailreach uninstall --all    # also forgets the Tailscale node, password, passkeys and signing identity
 ```
 
 Then remove the `devices` machine in the Tailscale admin console, and the permission entries in System Settings.

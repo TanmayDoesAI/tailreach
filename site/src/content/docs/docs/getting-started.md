@@ -46,9 +46,11 @@ On each extra Mac: `tailreach setup --name mac2`. It shows up on the first Mac's
 
 ## Uninstall
 
+Run this first: Homebrew can't remove a login item, so `brew uninstall` alone leaves tailreach running.
+
 ```sh
-tailreach uninstall
-rm -rf ~/Library/Application\ Support/tailreach
+tailreach uninstall --all
+brew uninstall tailreach
 ```
 
-Then remove the `devices` machine in the Tailscale admin console.
+`uninstall` stops tailreach and removes its login item. `--all` also deletes its data (Tailscale sign-in, password, passkeys) and its signing identity. It then lists what's left for you: the tailreach entries in Privacy & Security, and the `devices` machine in the Tailscale admin console.

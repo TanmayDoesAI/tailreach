@@ -29,7 +29,7 @@ func main() {
 			exitOn(install(os.Args[2:]))
 			return
 		case "uninstall":
-			exitOn(uninstall())
+			exitOn(uninstallCmd(os.Args[2:]))
 			return
 		case "password":
 			exitOn(passwordCmd(os.Args[2:]))

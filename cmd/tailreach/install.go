@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
@@ -67,14 +68,60 @@ func install(args []string) error {
 	return nil
 }
 
+// uninstallCmd stops tailreach and takes it off this Mac. Homebrew can't remove a login
+// item, so `brew uninstall` alone would leave the copy setup keeps running: this goes first.
+// --all also forgets the Tailscale node, password, passkeys and the signing identity.
+func uninstallCmd(args []string) error {
+	fs := flag.NewFlagSet("uninstall", flag.ExitOnError)
+	all := fs.Bool("all", false, "also delete tailreach's data (Tailscale node, password, passkeys, logs) and its signing identity")
+	fs.Parse(args)
+	if err := uninstall(); err != nil {
+		return err
+	}
+	if *all {
+		if err := os.RemoveAll(server.DefaultStateDir()); err != nil {
+			return err
+		}
+		fmt.Println("✓ deleted", server.DefaultStateDir())
+		if exec.Command("security", "find-certificate", "-c", "tailreach local").Run() == nil {
+			if out, err := exec.Command("security", "delete-identity", "-c", "tailreach local").CombinedOutput(); err != nil {
+				fmt.Printf("! couldn't delete the signing identity \"tailreach local\" (%s): remove it in Keychain Access\n", strings.TrimSpace(string(out)))
+			} else {
+				fmt.Println("✓ deleted the signing identity \"tailreach local\"")
+			}
+		}
+	}
+	fmt.Println("\nLeft for you:")
+	fmt.Println("  • System Settings → Privacy & Security → Screen Recording and Accessibility: select tailreach, click −")
+	if cellar.MatchString(selfPath()) {
+		fmt.Println("  • brew uninstall tailreach")
+	}
+	if *all {
+		fmt.Println("  • remove the tailreach machine (\"devices\" or this Mac's name) in the Tailscale admin console")
+	} else {
+		fmt.Println("  • to forget its data and sign-in too: tailreach uninstall --all")
+	}
+	return nil
+}
+
 func uninstall() error {
 	domain := fmt.Sprintf("gui/%d", os.Getuid())
-	exec.Command("launchctl", "bootout", domain+"/"+launchLabel).Run()
+	exec.Command("launchctl", "bootout", domain+"/"+launchLabel).Run() // stops the menu-bar item with it
 	if err := os.Remove(plistPath()); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	fmt.Println("✓ removed login item")
+	fmt.Println("✓ stopped tailreach and removed its login item")
+	if _, err := os.Stat(installedDir()); err == nil {
+		os.RemoveAll(installedDir())
+		fmt.Println("✓ removed the copy setup installed in", installedDir())
+	}
 	return nil
+}
+
+func selfPath() string {
+	exe, _ := os.Executable()
+	exe, _ = filepath.EvalSymlinks(exe)
+	return exe
 }
 
 func xmlEscape(s string) string {

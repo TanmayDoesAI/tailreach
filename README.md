@@ -88,12 +88,12 @@ make setup FLAGS='--name mac2 --via ""'     # or on its own, with its own sign-i
 
 With Homebrew, it's `tailreach setup --name mac2` (or `tailreach setup --name mac2 --via ""`).
 
-`./tailreach uninstall` removes the login item.
+`tailreach uninstall` stops tailreach and removes its login item (`--all` also deletes its data). With Homebrew, run it before `brew uninstall tailreach`.
 
 ## Using it
 
 **On the Mac: the menu-bar icon.** tailreach puts an icon in the menu bar. It's filled while someone is viewing and crossed out while sharing is paused. Its menu shows who's connected (or that it's ready, or waiting for the Tailscale sign-in, with the link), and has:
-- **Copy Link** (this Mac's viewer address) and **Open Dashboard**.
+- **Copy Link**: this Mac's address, to open on your other devices.
 - **Pause Sharing:** no one can view this Mac until you resume it, even after a restart. Anyone viewing is disconnected and sees "Sharing is paused on the Mac".
 - **Stop Current Session** while someone is connected (like Stop on the panel).
 - **Keep Mac Reachable** (see [sleep](#lock-screen-sleep-and-restarts)), your guests, and an update when there is one.
