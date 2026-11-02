@@ -42,10 +42,20 @@ struct UpdateInfo: Decodable {
     let url: String
 }
 
+struct PowerState: Decodable {
+    let source: String
+    let percent: Int?
+}
+
 struct ControlState: Decodable {
     var passwordEnabled = false
     var passwordSet = false
     var keepAwake = false
+    var awakeOnBattery: Bool?
+    var batteryFloor: Int?
+    var power: PowerState?
+    var paused: Bool?
+    var menuBar: Bool?
     var trusted: [TrustedDevice] = []
     var passkeys = 0
     var sessions: [LiveSession] = []
@@ -84,7 +94,7 @@ final class ControlClient: ObservableObject {
 
     func send(_ req: [String: Any], done: String? = nil) {
         DispatchQueue.global(qos: .userInitiated).async {
-            let reply = self.roundTrip(req)
+            let reply = controlRoundTrip(self.path, req)
             DispatchQueue.main.async {
                 guard let reply, let st = try? JSONDecoder().decode(ControlState.self, from: reply) else {
                     self.offline = true
@@ -113,37 +123,38 @@ final class ControlClient: ObservableObject {
     func invite() {
         send(["op": "invite", "login": guestLogin.trimmingCharacters(in: .whitespaces), "hours": guestHours, "viewOnly": guestViewOnly])
     }
+}
 
-    /// One JSON line out, one JSON line back.
-    private func roundTrip(_ req: [String: Any]) -> Data? {
-        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard fd >= 0 else { return nil }
-        defer { close(fd) }
-        var addr = sockaddr_un()
-        addr.sun_family = sa_family_t(AF_UNIX)
-        let bytes = Array(path.utf8)
-        guard bytes.count < MemoryLayout.size(ofValue: addr.sun_path) else { return nil }
-        withUnsafeMutableBytes(of: &addr.sun_path) { raw in
-            raw.copyBytes(from: bytes)
-            raw[bytes.count] = 0
-        }
-        let ok = withUnsafePointer(to: &addr) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) == 0
-            }
-        }
-        guard ok, var body = try? JSONSerialization.data(withJSONObject: req) else { return nil }
-        body.append(0x0A)
-        guard body.withUnsafeBytes({ write(fd, $0.baseAddress, $0.count) }) == body.count else { return nil }
-        var out = Data()
-        var buf = [UInt8](repeating: 0, count: 16384)
-        while !out.contains(0x0A) {
-            let n = read(fd, &buf, buf.count)
-            if n <= 0 { break }
-            out.append(buf, count: n)
-        }
-        return out.isEmpty ? nil : out
+/// One JSON line out to the control socket, one JSON line back (nil if tailreach isn't running).
+/// Blocking: call it off the main thread. The menu bar uses it too.
+func controlRoundTrip(_ path: String, _ req: [String: Any]) -> Data? {
+    let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+    guard fd >= 0 else { return nil }
+    defer { close(fd) }
+    var addr = sockaddr_un()
+    addr.sun_family = sa_family_t(AF_UNIX)
+    let bytes = Array(path.utf8)
+    guard bytes.count < MemoryLayout.size(ofValue: addr.sun_path) else { return nil }
+    withUnsafeMutableBytes(of: &addr.sun_path) { raw in
+        raw.copyBytes(from: bytes)
+        raw[bytes.count] = 0
     }
+    let ok = withUnsafePointer(to: &addr) {
+        $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+            connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) == 0
+        }
+    }
+    guard ok, var body = try? JSONSerialization.data(withJSONObject: req) else { return nil }
+    body.append(0x0A)
+    guard body.withUnsafeBytes({ write(fd, $0.baseAddress, $0.count) }) == body.count else { return nil }
+    var out = Data()
+    var buf = [UInt8](repeating: 0, count: 16384)
+    while !out.contains(0x0A) {
+        let n = read(fd, &buf, buf.count)
+        if n <= 0 { break }
+        out.append(buf, count: n)
+    }
+    return out.isEmpty ? nil : out
 }
 
 // MARK: - Views
@@ -229,8 +240,15 @@ struct SettingsView: View {
                 Toggle("Keep this Mac reachable while plugged in", isOn: Binding(
                     get: { control.state.keepAwake },
                     set: { control.send(["op": "keepAwake", "enabled": $0]) }))
+                Toggle("Also on battery, until \(control.state.batteryFloor ?? 20)% is left", isOn: Binding(
+                    get: { control.state.awakeOnBattery ?? false },
+                    set: { control.send(["op": "awakeOnBattery", "enabled": $0]) }))
+                    .disabled(!control.state.keepAwake)
+                if let p = control.state.power, p.source == "battery" {
+                    Text("On battery now (\(p.percent ?? 0)%)").font(.callout).foregroundStyle(.secondary)
+                }
             } header: { Text("Availability") } footer: {
-                Text("Stops the Mac sleeping on power so you can always reach it; the display still turns off. When it's locked, your phone can unlock it with the Mac password. After a restart, FileVault needs the password typed at the Mac once.")
+                Text("A sleeping Mac drops off Tailscale and your phone can't reach it. This stops it sleeping by itself; the display still turns off. With the lid closed on battery it sleeps anyway. When it's locked, your phone can unlock it with the Mac password. After a restart, FileVault needs the password typed at the Mac once.")
             }
 
             Section {
@@ -249,6 +267,15 @@ struct SettingsView: View {
                     ? "Turned off with --no-update-check."
                     : "Asks GitHub for the latest release number. It sends nothing about you or this Mac, and it's the only request tailreach makes besides Tailscale.")
             }
+
+            Section {
+                Toggle("Pause sharing (no one can view until you resume)", isOn: Binding(
+                    get: { control.state.paused ?? false },
+                    set: { control.send(["op": "pause", "paused": $0]) }))
+                Toggle("Show tailreach in the menu bar", isOn: Binding(
+                    get: { control.state.menuBar ?? true },
+                    set: { control.send(["op": "menuBar", "enabled": $0]) }))
+            } header: { Text("Sharing") }
 
             Section("Live sessions") {
                 if control.state.sessions.isEmpty {
