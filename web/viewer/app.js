@@ -456,6 +456,7 @@ function stopRTC(tellServer, keepPicture = false) {
 // ours too.
 let directDec = null, directWorker = null, directOn = false, directKey = true, directAsked = 0;
 let directCfg = null;    // the decoder setup this browser takes, or null: no direct video
+let directFed = 0, directLastOut = 0;   // frames given to the decoder since it last gave one back, and when that was
 let directErrors = [];   // recent decoder failures; too many and this session goes back to <video>
 
 // No description: WebRTC frames are Annex B, with the parameter sets in each keyframe.
@@ -525,15 +526,26 @@ function directFeed({ data, key, ts }) {
     if (!key) { if (performance.now() - directAsked > 1000) { directAsked = performance.now(); send({ t: 'kf' }); } return; }
     directDec = new VideoDecoder({ output: directFrame, error: directFailed });
     directDec.configure(directCfg);
+    directFed = 0; directLastOut = performance.now();
   }
   if (directKey && !key) return;
   // A device that can't keep up skips ahead instead of falling behind.
   if (directDec.decodeQueueSize > 3 && !key) { directKey = true; send({ t: 'kf' }); return; }
   directKey = false;
   directDec.decode(new EncodedVideoChunk({ type: key ? 'key' : 'delta', timestamp: Math.round(ts / 0.09), data }));
+  directFed++;
 }
 
+// Some decoders stop giving frames back without any error: the picture would freeze while
+// input carries on. Frames waiting 1.5 s with nothing back: start a fresh decoder (3 times in
+// 10 s and this session goes back to the <video>). A still screen sends nothing, so never trips it.
+setInterval(() => {
+  if (directDec && directFed > 0 && performance.now() - directLastOut > 1500) directFailed(new Error('decoder stalled'));
+}, 500);
+
 function directFrame(frame) {
+  directFed = 0;
+  directLastOut = performance.now();
   if (canvas.width !== frame.displayWidth || canvas.height !== frame.displayHeight) {
     canvas.width = frame.displayWidth;
     canvas.height = frame.displayHeight;
@@ -549,7 +561,9 @@ function directFrame(frame) {
 
 function directFailed(err) {
   dlog('direct decoder', String(err));
+  try { directDec?.close(); } catch {}
   directDec = null;
+  directFed = 0;
   directKey = true;
   const now = performance.now();
   directErrors = directErrors.filter((t) => now - t < 10000).concat(now);
@@ -1169,14 +1183,27 @@ surface.addEventListener('pointermove', (e) => {
   send({ t: 'abs', x: p.x, y: p.y });
   predictAbs(p);
 });
+// Pointer events carry no click count (their detail is always 0), so double and triple
+// clicks are counted here, the way macOS does: the same button again, soon, close by.
+// The Mac needs the count to see a double-click (open a file, select a word, full screen).
+const mouseClicks = { b: -1, at: 0, x: 0, y: 0, n: 0 };
+function mouseClickCount(b, e) {
+  const c = mouseClicks, now = performance.now();
+  const again = b === c.b && now - c.at < 500 && Math.hypot(e.clientX - c.x, e.clientY - c.y) < 6;
+  Object.assign(c, { b, at: now, x: e.clientX, y: e.clientY, n: again ? Math.min(3, c.n + 1) : 1 });
+  return c.n;
+}
+const mouseButton = (e) => (e.button === 2 ? 1 : e.button === 1 ? 2 : 0);
 surface.addEventListener('pointerdown', (e) => {
   if (e.pointerType !== 'mouse') return;
   surface.setPointerCapture(e.pointerId);
-  send({ t: 'btn', b: e.button === 2 ? 1 : e.button === 1 ? 2 : 0, down: true, n: Math.max(1, e.detail), m: physicalMods(e), ...toRemote(e.clientX, e.clientY) });
+  const b = mouseButton(e);
+  send({ t: 'btn', b, down: true, n: mouseClickCount(b, e), m: physicalMods(e), ...toRemote(e.clientX, e.clientY) });
 });
 surface.addEventListener('pointerup', (e) => {
   if (e.pointerType !== 'mouse') return;
-  send({ t: 'btn', b: e.button === 2 ? 1 : e.button === 1 ? 2 : 0, down: false, n: Math.max(1, e.detail), m: physicalMods(e), ...toRemote(e.clientX, e.clientY) });
+  const b = mouseButton(e);
+  send({ t: 'btn', b, down: false, n: b === mouseClicks.b ? mouseClicks.n : 1, m: physicalMods(e), ...toRemote(e.clientX, e.clientY) });
 });
 surface.addEventListener('contextmenu', (e) => e.preventDefault());
 surface.addEventListener('wheel', (e) => {

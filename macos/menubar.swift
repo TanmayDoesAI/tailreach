@@ -135,9 +135,6 @@ final class MenuBar: NSObject, NSMenuDelegate {
                 NSPasteboard.general.setString(url, forType: .string)
             })
         }
-        if let url = st.dashboardURL ?? st.url {
-            menu.addItem(action("Open Dashboard") { openURL(url) })
-        }
         menu.addItem(.separator())
 
         let pause = action("Pause Sharing") { [weak self] in
