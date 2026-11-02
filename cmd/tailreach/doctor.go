@@ -34,7 +34,7 @@ func doctor(args []string) error {
 	mac := runtime.GOOS == "darwin"
 	// The fixes name the commands for this kind of install: a Homebrew copy or a checkout.
 	me, restart, rebuild := "./tailreach", "`make reload`", "`make local && make reload`"
-	if launchPath(exe) != exe {
+	if managedCopy(exe) {
 		me, restart, rebuild = "tailreach", "`tailreach setup`", "`tailreach setup`"
 	}
 
@@ -57,12 +57,13 @@ func doctor(args []string) error {
 		} else {
 			d.fail("No signing identity \"tailreach local\": permissions would reset on every build", setupFix(exe, "sh scripts/signing-identity.sh, then `make reload`"))
 		}
-		for _, b := range []struct{ path, id string }{{exe, "com.tailreach.agent"}, {server.HelperPath(), "com.tailreach.capture"}} {
+		// The copies the login item runs (for Homebrew, the ones setup keeps), not this command.
+		for _, b := range []struct{ path, id string }{{launchPath(exe), "com.tailreach.agent"}, {installedHelper(exe), "com.tailreach.capture"}} {
 			name := filepath.Base(b.path)
 			out, err := exec.Command("codesign", "-dv", "--verbose=2", b.path).CombinedOutput()
 			switch {
 			case err != nil && strings.Contains(string(out), "No such file"):
-				d.fail(name+" is missing", setupFix(exe, "`make local`")+" (Homebrew: `brew reinstall tailreach`)")
+				d.fail(name+" is missing", setupFix(exe, "`make local`"))
 			case !strings.Contains(string(out), "Authority=tailreach local") || !strings.Contains(string(out), "Identifier="+b.id):
 				d.fail(name+" isn't signed with \"tailreach local\"", setupFix(exe, "make local (after sh scripts/signing-identity.sh)"))
 			default:
@@ -225,7 +226,7 @@ func (d *checkup) keepAwake(st map[string]any, me string) {
 
 // setupFix is the fix for a Homebrew copy (`tailreach setup`), or else the one for a checkout.
 func setupFix(exe, checkout string) string {
-	if launchPath(exe) != exe {
+	if managedCopy(exe) {
 		return "tailreach setup"
 	}
 	return checkout

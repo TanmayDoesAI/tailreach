@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"time"
 
 	"github.com/TanmayDoesAI/tailreach/internal/server"
@@ -23,7 +24,9 @@ func openSettings(args []string) error {
 	if _, err := os.Stat(sock); err != nil {
 		return fmt.Errorf("tailreach isn't running (no %s)", sock)
 	}
-	cmd := exec.Command(server.HelperPath(), "--settings", sock)
+	exe, _ := os.Executable()
+	exe, _ = filepath.EvalSymlinks(exe)
+	cmd := exec.Command(installedHelper(exe), "--settings", sock)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	return cmd.Run()
 }

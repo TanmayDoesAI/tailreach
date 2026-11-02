@@ -19,6 +19,11 @@ import (
 // doctor. Safe to run again, and needed again after `brew upgrade`: Homebrew builds
 // without access to the keychain, so its copies come ad-hoc signed, and macOS would
 // forget their Screen Recording and Accessibility permissions.
+//
+// A Homebrew copy is copied into installedDir() first, and the login item runs that: macOS
+// files a command-line program's permissions by its path, and Homebrew puts every version
+// in a new folder, so running it from there would add another "tailreach" to each Privacy
+// list (and ask again) on every upgrade.
 
 func setup(args []string) error {
 	if runtime.GOOS != "darwin" {
@@ -36,10 +41,22 @@ func setup(args []string) error {
 	} else {
 		fmt.Print(string(out))
 	}
-	for _, b := range []struct{ path, id string }{{exe, "com.tailreach.agent"}, {server.HelperPath(), "com.tailreach.capture"}} {
-		if err := resign(b.path, b.id); err != nil {
-			return fmt.Errorf("signing %s: %v", filepath.Base(b.path), err)
+	inst := launchPath(exe)
+	if inst != exe {
+		if err := os.MkdirAll(installedDir(), 0o755); err != nil {
+			return err
 		}
+	}
+	for _, b := range []struct{ src, dst, id string }{
+		{exe, inst, "com.tailreach.agent"},
+		{server.HelperPath(), installedHelper(exe), "com.tailreach.capture"},
+	} {
+		if err := signInto(b.src, b.dst, b.id); err != nil {
+			return fmt.Errorf("signing %s: %v", filepath.Base(b.dst), err)
+		}
+	}
+	if inst != exe {
+		fmt.Println("✓ installed in", installedDir()+", the same place every version, so permissions survive upgrades")
 	}
 	fmt.Println("✓ signed with \"tailreach local\", so macOS keeps the permissions you grant")
 
@@ -58,7 +75,7 @@ func setup(args []string) error {
 			grantPermissions(server.DefaultStateDir(), exe)
 			return doctor(nil)
 		}
-		args = was[1:]
+		args = carryFlags(was[1:])
 	}
 	if len(args) == 0 {
 		args = []string{"--hub", "--name", "mac"}
@@ -70,30 +87,63 @@ func setup(args []string) error {
 	return doctor(nil)
 }
 
-// resign signs a copy and moves it into place: signing the file of a running program in
-// place can get that program killed.
-func resign(path, id string) error {
-	tmp := path + ".signing"
-	if out, err := exec.Command("cp", "-p", path, tmp).CombinedOutput(); err != nil {
+// signInto signs a copy of src and moves it into place at dst (which may be src itself):
+// signing or overwriting the file of a running program in place can get it killed.
+func signInto(src, dst, id string) error {
+	tmp := dst + ".signing"
+	if out, err := exec.Command("cp", "-p", src, tmp).CombinedOutput(); err != nil {
 		return fmt.Errorf("%v: %s", err, out)
 	}
 	if out, err := exec.Command("codesign", "--force", "-s", "tailreach local", "--identifier", id, tmp).CombinedOutput(); err != nil {
 		os.Remove(tmp)
 		return fmt.Errorf("%v: %s", err, out)
 	}
-	return os.Rename(tmp, path)
+	return os.Rename(tmp, dst)
 }
 
-// launchPath is the path the login item should start: for a Homebrew copy, the stable
-// opt/ link rather than this version's Cellar folder, so `brew upgrade` doesn't break it.
+// carryFlags keeps an old login item's settings (name, hub, via…) but drops the ones only
+// meant for working on tailreach itself: a copy migrated from a checkout must not keep
+// serving its web pages from that checkout, or log verbosely forever.
+func carryFlags(args []string) []string {
+	var out []string
+	for i := 0; i < len(args); i++ {
+		a := strings.TrimLeft(args[i], "-")
+		name, _, inline := strings.Cut(a, "=")
+		switch name {
+		case "web-dir":
+			if !inline {
+				i++ // its value
+			}
+			continue
+		case "v":
+			continue
+		}
+		out = append(out, args[i])
+	}
+	return out
+}
+
+// installedDir is where setup keeps the copy of a Homebrew install that the login item runs.
+func installedDir() string { return filepath.Join(server.DefaultStateDir(), "bin") }
+
+var cellar = regexp.MustCompile(`/Cellar/[^/]+/[^/]+/`)
+
+// launchPath is the path the login item should start: for a Homebrew copy (in one version's
+// Cellar folder), the copy in installedDir() that setup keeps, so the path never changes.
 func launchPath(exe string) string {
-	m := regexp.MustCompile(`^(.*)/Cellar/([^/]+)/[^/]+/(.+)$`).FindStringSubmatch(exe)
-	if m == nil {
+	if !cellar.MatchString(exe) {
 		return exe
 	}
-	opt := filepath.Join(m[1], "opt", m[2], m[3])
-	if _, err := os.Stat(opt); err != nil {
-		return exe
-	}
-	return opt
+	return filepath.Join(installedDir(), filepath.Base(exe))
+}
+
+// installedHelper is the capture helper next to the copy the login item runs.
+func installedHelper(exe string) string {
+	return filepath.Join(filepath.Dir(launchPath(exe)), "tailreach-capture")
+}
+
+// managedCopy is true for an install that `tailreach setup` looks after (Homebrew's, or the
+// copy it keeps), rather than a checkout built with make.
+func managedCopy(exe string) bool {
+	return launchPath(exe) != exe || filepath.Dir(exe) == installedDir()
 }
