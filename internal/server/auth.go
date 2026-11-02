@@ -217,7 +217,8 @@ func (a *app) authRoutes(mux *http.ServeMux) {
 func (a *app) requireSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
-		open := p == "/login" || p == "/manifest.webmanifest" || strings.HasPrefix(p, "/icons/") || strings.HasPrefix(p, "/.well-known/")
+		open := p == "/login" || p == "/manifest.webmanifest" || p == "/sw.js" || p == "/offline.html" ||
+			strings.HasPrefix(p, "/icons/") || strings.HasPrefix(p, "/.well-known/")
 		var ok bool
 		if g := guestOf(r); g != nil {
 			// A guest never uses the owner's password, pairing codes or passkeys: of /auth/

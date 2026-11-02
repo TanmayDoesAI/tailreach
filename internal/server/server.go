@@ -92,6 +92,14 @@ func (a *app) handler() http.Handler {
 	static := http.FileServer(http.FS(a.web))
 	mux.Handle("GET /icons/", static)
 	mux.Handle("GET /manifest.webmanifest", static)
+	// The service worker and the page it shows when the Mac can't be reached (asleep,
+	// offline). Open like the icons: the browser fetches them for itself, cookies or not.
+	fresh := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		static.ServeHTTP(w, r)
+	})
+	mux.Handle("GET /sw.js", fresh)
+	mux.Handle("GET /offline.html", fresh)
 
 	viewer := a.viewer()
 	viewerFiles := a.viewerFiles() // the hub's own copy, also for the devices behind it
