@@ -67,10 +67,23 @@ A network switch (Wi-Fi ↔ 5G) breaks the WebRTC connection.
 | 5G | ≥ 45 | under 5% | every dip recovered within 2 s |
 | Network switch | | | live again within 3 s |
 
+## Resolution follows the bitrate
+
+At 1–3 Mbit/s a full-size Mac screen turns text to mush: too few bits spread over too many pixels. So, like Parsec and Jump, the picture gets smaller when the connection can only carry a low rate, and full-size again when it recovers:
+
+| Size | H.264 drops below / returns above | HEVC |
+|---|---|---|
+| 100% ↔ 75% | 4 / 6 Mbit/s | 2.8 / 4.2 Mbit/s |
+| 75% ↔ 50% | 1.5 / 2.5 Mbit/s | 1.05 / 1.75 Mbit/s |
+
+- It only steps down once the connection has actually shown a limit, so a still screen (which sends little) never loses detail.
+- Down after 2 s below a threshold (a deep dip goes straight to 50%); up one step at a time after 6 s above; never more than one change every 4 s.
+- Capture is resized in place, without restarting, and input and the cursor are unaffected. The status pill's tooltip shows the current size, e.g. "75% res".
+
 ## Known costs and next steps
 
 - **Latency spike on a sudden dip.** A dip from a high rate fills the path's buffer once before the cut lands: latency p99 is about 1 s in the harshest bench, against about 0.3 s for a controller that never leaves 1 Mbit/s. A candidate fix is dropping frames before encoding when the probe reads a deep queue.
-- **Resolution doesn't follow the bitrate yet.** At 1 Mbit/s a phone doesn't need full resolution; scaling down would keep text readable in deep dips.
+- **Resolution thresholds are a first guess,** not yet tuned on a phone, and the same for a small picture as for a large one.
 - **Not tried yet:** FlexFEC for lossy 5G, and a QP cap.
 
 The engineering version of this page, with file names, is [`docs/streaming.md`](https://github.com/TanmayDoesAI/tailreach/blob/main/docs/streaming.md) in the repo.
