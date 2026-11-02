@@ -32,6 +32,22 @@ The encoder's bitrate is set four times a second by `rateCtl` (`ratectl.go`). Th
 
 **Retransmits.** Without a limit, every dip ended in a retransmit storm, about 3000 drops a second. `nackLimiter` caps resends: at most two per packet, at least 80 ms apart, and within 30% of the current bitrate.
 
+## Resolution follows the bitrate
+
+At 1–3 Mbit/s a full-size Mac screen turns text to mush: the encoder spreads too few bits over too many pixels. Fewer, sharper pixels read better, so, like Parsec and Jump, the capture size drops when the link can only carry a low rate and comes back when it recovers. The policy is `ratectl.Scaler` (`internal/ratectl/scale.go`), run in the same 4×/s loop as the rate controller.
+
+| Step (capture size, of what the viewer asked for) | H.264: down below / back up above | HEVC |
+|---|---|---|
+| 100% ↔ 75% | 4 / 6 Mbit/s | 2.8 / 4.2 |
+| 75% ↔ 50% | 1.5 / 2.5 Mbit/s | 1.05 / 1.75 |
+
+- **Only when the link is the limit.** It steps down only while the rate controller has seen congestion and not yet climbed well past it (`CutAt`). A still screen also sits at a low rate, since nothing proves the link can carry more, and that is no reason to drop pixels.
+- **Slow to change, quicker down than up.** Down once the rate has been below a threshold for 2 s (most 5G dips are over sooner, and don't change the size at all). A deep dip goes straight to 50%. Back up one level at a time, after 6 s above the threshold. At least 4 s at any level, so it never flaps. Each change costs a keyframe.
+- **Never above what the viewer asked for** (`w`/`h` in `start`), and never under 640 px on the long side.
+- **How:** the server sends the helper `{"t":"scale","f":0.75}` (a server-only command: not in `allowedCmds`). The helper changes the size with `SCStream.updateConfiguration`, so capture keeps running. When frames arrive at the new size, the encoder starts a new VideoToolbox session at that size. Its first frame is a keyframe with the new SPS/PPS, which the WebRTC path puts in front of it, and the WebSocket path sends as a new decoder config.
+- **The viewer** sizes its canvas from each frame (`<video>` metadata, direct video's decoded frames, or the WebSocket config). Layout, the local cursor and touch input all work in the picture's on-screen size and 0..1 coordinates, so a size change only changes sharpness. The status pill's tooltip says e.g. "75% res".
+- **Per stream:** a new stream starts at full size; a restart within one (another display, sound on) keeps the current scale (`start` carries it). Only the WebRTC loop changes it; on the WebSocket fallback it stays where it was.
+
 ## Reconnects
 
 A network switch (Wi-Fi ↔ 5G) breaks the WebRTC connection.
@@ -43,7 +59,7 @@ A network switch (Wi-Fi ↔ 5G) breaks the WebRTC connection.
 
 ## How it was measured
 
-- **Unit simulations** in `ratectl_test.go` cover dips, a step down, a path change, a blackout, and still content followed by motion. `SEEDS=1 go test -run Seeds` runs 30 random seeds with 40 ms of jitter, and there should be no slow recoveries.
+- **Unit simulations** in `ratectl_test.go` cover dips, a step down, a path change, a blackout, and still content followed by motion. `SEEDS=1 go test -run Seeds` runs 30 random seeds with 40 ms of jitter, and there should be no slow recoveries. `scale_test.go` covers the resolution steps: dips, recoveries, HEVC, and rates swinging around a threshold (never two changes within 4 s).
 - **`tools/streambench`** runs a real WebRTC session through a simulated bad network: rate caps, drops, blackouts, rate changes.
   - **Clean link, Mac plugged in:** 53.7 fps, p95 latency 11 ms, 3 → 20 Mbit/s in 11 s.
   - **Three 5G-style dips and a blackout:** every recovery was back to about 55 fps within 2–3 s. The previous GCC-based controller stayed stuck at about 1 Mbit/s after the first dip.
@@ -65,5 +81,5 @@ A network switch (Wi-Fi ↔ 5G) breaks the WebRTC connection.
 
 - **Latency spike on a sudden dip.** A dip from a high rate fills the path's buffer once before the cut lands. Latency p99 is about 1 s in the harshest bench, against about 0.3 s for a controller that never leaves 1 Mbit/s.
   - Candidate fix: drop frames before encoding when the probe reads a deep queue.
-- **Resolution doesn't follow the bitrate yet.** At 1 Mbit/s a phone doesn't need full resolution; scaling down would keep text readable in deep dips.
+- **Resolution thresholds are absolute,** not per pixel: a viewer that asked for a small picture is treated like one that asked for a large one. They are a first guess, not yet tuned on a phone.
 - **Not tried yet:** FlexFEC for lossy 5G, and a QP cap.

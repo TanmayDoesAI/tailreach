@@ -24,7 +24,7 @@ Go server with embedded Tailscale (`tsnet`), a Swift capture/input helper (`maco
 | `internal/server/security.go` | device password (Argon2id), 30-day device trust, live sessions, local control socket |
 | `internal/server/stream.go` | viewer WebSocket: control, input dispatch (`forward`), WS video/input fallback, bitrate steering |
 | `internal/server/rtc.go` | WebRTC (pion): video with true capture timestamps, NACK + RTCP reports only; queue probe (`sping`/`spong`); `input` (reliable) and `move` (unordered, no resends) data channels |
-| `internal/ratectl/` | the rate controller (cut fast, jump back to the last good rate, probe gently) and the cap on retransmits; see `docs/streaming.md` |
+| `internal/ratectl/` | the rate controller (cut fast, jump back to the last good rate, probe gently), the capture scale that follows it (`scale.go`) and the cap on retransmits; see `docs/streaming.md` |
 | `internal/server/debug*.go` | `dlog` and the `debug` build tag (`make DEBUG=1`) |
 | `internal/server/vrec.go` | measurement mode: the viewer's own receive stats, logged on the Mac (switched on from the control socket) |
 | `internal/server/vdisplay*.go` | extended display: a virtual second monitor (private CGVirtualDisplay via `go-macos/virtualdisplay`), child process `tailreach vdisplay` owns it, idle auto-close; never the main display |
