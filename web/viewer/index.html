@@ -207,5 +207,6 @@
   <textarea id="kbd" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false"></textarea>
 
   <script src="app.js"></script>
+  <script>if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {}); // offline page (sw.js)</script>
 </body>
 </html>

@@ -3,6 +3,7 @@
 //   tailreach-capture                   streams the screen as low-latency H.264 while a viewer is
 //                                       attached, injects input, shows the "screen shared" panel
 //   tailreach-capture --settings SOCK   the settings window (see settings.swift)
+//   tailreach-capture --menubar SOCK    the menu-bar item, started by tailreach (see menubar.swift)
 //
 // `tailreach` keeps one warm for a short while after a viewer leaves, so coming back is instant.
 //   stdout: frames  [u32 big-endian length][u8 type][payload]
@@ -917,6 +918,9 @@ func arg(_ name: String) -> String? {
 
 if let sock = arg("--settings") {
     runSettings(socketPath: sock) // never returns
+}
+if let sock = arg("--menubar") {
+    runMenuBar(socketPath: sock) // never returns
 }
 
 // Only tailreach may start the capture side. Run any other way (by hand from a terminal),

@@ -92,6 +92,13 @@ With Homebrew, it's `tailreach setup --name mac2` (or `tailreach setup --name ma
 
 ## Using it
 
+**On the Mac: the menu-bar icon.** tailreach puts an icon in the menu bar. It's filled while someone is viewing and crossed out while sharing is paused. Its menu shows who's connected (or that it's ready, or waiting for the Tailscale sign-in, with the link), and has:
+- **Copy Link** (this Mac's viewer address) and **Open Dashboard**.
+- **Pause Sharing:** no one can view this Mac until you resume it, even after a restart. Anyone viewing is disconnected and sees "Sharing is paused on the Mac".
+- **Stop Current Session** while someone is connected (like Stop on the panel).
+- **Keep Mac Reachable** (see [sleep](#lock-screen-sleep-and-restarts)), your guests, and an update when there is one.
+- **Settings…**, **Check Setup…** (`tailreach doctor` in Terminal) and **Hide Menu-Bar Icon**. Hiding it doesn't stop tailreach; turn it back on in `tailreach settings`.
+
 **Touch controls.** The ◎/☝︎ button switches between trackpad mode and touch mode.
 
 | Gesture | Trackpad mode (◎) | Touch mode (☝︎) |
@@ -198,10 +205,10 @@ Every request has to pass all of these layers:
 7. **You see every session.** A **"Screen shared" panel** sits at the top right of the Mac while someone is connected. It shows who and for how long, and has a **Stop** button. The panel is left out of the stream.
    - macOS also shows its screen-recording indicator, and notifications cover new passkeys and trusted devices.
    - Everything is written to `~/Library/Application Support/tailreach/audit.log`.
-8. **Settings only on the Mac.** The settings window talks to tailreach over a Unix socket that only your macOS user can open. Nothing about settings is reachable over the network.
+8. **Settings only on the Mac.** The settings window and the menu-bar icon talk to tailreach over a Unix socket that only your macOS user can open. Nothing about settings is reachable over the network.
 9. **Screen and input only.** Viewers can see the screen, point, type, scroll and use the clipboard (secrets copied from password managers are never sent). There is no way to run commands, browse or read files, or start background processes. Two extras: the extended display, which can only add an extra screen, and sending a file, which can only add a new file to Downloads.
 10. **One viewer at a time.** Another device has to ask to take over.
-11. **Stop means stop.** Pressing Stop on the Mac ends the session and refuses reconnects for 2 minutes.
+11. **Stop means stop.** Pressing Stop on the Mac ends the session and refuses reconnects for 2 minutes. **Pause Sharing** in the menu bar refuses every viewer until you resume it.
     - Changing the password, revoking a device or resetting passkeys ends live sessions immediately.
 
 **Update check.** Once a day, each Mac asks GitHub for the number of the latest tailreach release (`api.github.com`, over the normal internet). It's the only request tailreach makes besides Tailscale, and it sends nothing about you or the Mac beyond `tailreach/<version>`. A newer release shows on the dashboard, in `tailreach doctor` and in the log. Turn it off in the settings window, or with `--no-update-check`.
@@ -214,7 +221,10 @@ Tip: in the Tailscale admin console's access controls, you can also limit which 
 
 - **Locked Mac:** your phone shows "Mac is locked". Type the Mac password and it's entered on the real lock screen through the Mac's own Screen Sharing. The fast stream then resumes. Screen Sharing must be on.
   - macOS locks the Mac again as soon as a Screen Sharing session that unlocked it ends. So that connection stays open, idle, while you're viewing, and closes a minute after you leave (or at once when Stop is pressed on the Mac). The Mac then locks itself again.
-- **Sleep:** turn on *Keep this Mac reachable while plugged in* in settings. The display still sleeps, but the Mac stays online.
+- **Sleep:** a sleeping Mac drops off Tailscale, and your phone can't reach it. So tailreach keeps the Mac from sleeping by itself while it's plugged in (on for new installs; **Keep Mac Reachable** in the menu-bar icon or settings). The display still sleeps.
+  - **Also on Battery** keeps it awake on battery too, until 20% is left.
+  - With the lid closed on battery, the Mac sleeps anyway; nothing can prevent that.
+  - If the Mac can't be reached at all, the page on your phone says so and what to check (Tailscale on the phone, the Mac awake and online), instead of a browser error.
 - **Restart:** with FileVault on, the Mac waits at the disk-unlock screen before anything starts, so no remote tool can reach it. Someone has to type the password there once. After that, tailreach starts on its own if it's installed with `./tailreach install …`. For restarts you plan, `sudo fdesetup authrestart` skips that screen once.
 
 ## If something goes wrong

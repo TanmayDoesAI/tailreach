@@ -140,14 +140,14 @@ function connect() {
     stopRTC(false, true);
     resetDecoder();
     if (stopped) return;
-    if (e.code === 4001) return stoppedOnMac();
+    if (e.code === 4001) return stoppedOnMac(e.reason);
     if (e.code === 4002) return inUse(e.reason);
     if (e.code === 4003) return takenOver(e.reason);
     if (!opened && retry >= 1) {
       // Refused before it opened: find out why instead of retrying blindly.
       const r = await fetch('stream', { cache: 'no-store' }).catch(() => null);
       if (r?.status === 401) return location.replace('/login?next=' + encodeURIComponent(location.pathname));
-      if (r?.status === 423) return stoppedOnMac();
+      if (r?.status === 423) return stoppedOnMac(await r.text().catch(() => ''));
     }
     if (document.visibilityState === 'visible') {
       setState('connecting', 'Reconnecting');
@@ -203,10 +203,11 @@ function takenOver(by) {
   };
 }
 
-function stoppedOnMac() {
+function stoppedOnMac(reason) {
   stopped = true;
   hasFrame = false;
-  setState('off', 'Screen sharing was stopped on the Mac.');
+  // Paused from the Mac's menu bar: refused until someone at the Mac resumes it.
+  setState('off', /paused/.test(reason || '') ? 'Sharing is paused on the Mac.' : 'Screen sharing was stopped on the Mac.');
   const a = $('#splashAction');
   splashAction('Try again', '');
   a.onclick = (e) => {

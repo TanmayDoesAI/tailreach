@@ -186,6 +186,7 @@ func retireHelperOnExit() {
 	signal.Notify(ch, syscall.SIGTERM, syscall.SIGINT)
 	go func() {
 		<-ch
+		stopMenuBar()
 		helperState.Lock()
 		h := helperState.h
 		helperState.Unlock()

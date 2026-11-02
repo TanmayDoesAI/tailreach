@@ -22,7 +22,9 @@ Go server with embedded Tailscale (`tsnet`), a Swift capture/input helper (`maco
 | `internal/server/update.go` | once-a-day check for a newer release on GitHub (the only non-Tailscale request; `--no-update-check` / `updateCheck` op) |
 | `internal/server/auth.go` | passkeys (WebAuthn), sessions, pairing codes, guest invite-code sign-in, audit log |
 | `internal/server/invites.go` | guests: expiring invites for other Tailscale logins, one-time codes (hashed, single use, rate limited), `invites.json` |
-| `internal/server/security.go` | device password (Argon2id), 30-day device trust, live sessions, local control socket |
+| `internal/server/security.go` | device password (Argon2id), 30-day device trust, live sessions, local control socket (up before Tailscale signs in; `ctlApp` once ready), Pause sharing |
+| `internal/server/awake.go` | keep the Mac reachable: a no-sleep assertion (`caffeinate`) on power, optionally on battery above 20%, following the power source |
+| `internal/server/menubar.go` | starts the menu-bar item, restarts it with backoff, stops it by closing its stdin; one at a time |
 | `internal/server/stream.go` | viewer WebSocket: control, input dispatch (`forward`), WS video/input fallback, bitrate steering |
 | `internal/server/rtc.go` | WebRTC (pion): video with true capture timestamps, NACK + RTCP reports only; queue probe (`sping`/`spong`); `input` (reliable) and `move` (unordered, no resends) data channels |
 | `internal/ratectl/` | the rate controller (cut fast, jump back to the last good rate, probe gently), the capture scale that follows it (`scale.go`) and the cap on retransmits; see `docs/streaming.md` |
@@ -33,9 +35,10 @@ Go server with embedded Tailscale (`tsnet`), a Swift capture/input helper (`maco
 | `internal/server/vnchold.go` | keeps the phone's unlock connection to Screen Sharing open (idle) while anyone views, since macOS re-locks when it ends |
 | `internal/server/helper.go` | one warm `tailreach-capture` process shared across reconnects |
 | `internal/server/migrate.go` | moves an install from before the rename (`mydevices`) over |
-| `macos/*.swift` | `tailreach-capture`: ScreenCaptureKit + VideoToolbox H.264/HEVC, Opus sound, CGEvent input, "Screen shared" panel, settings window |
+| `macos/*.swift` | `tailreach-capture`: ScreenCaptureKit + VideoToolbox H.264/HEVC, Opus sound, CGEvent input, "Screen shared" panel, settings window (`--settings`), menu-bar item (`--menubar`, `menubar.swift`) |
 | `web/viewer/` | the viewer (`app.js`; `rtcworker.js` is direct video); `classic/` + `novnc/` is the VNC fallback for the lock screen |
 | `web/login.html`, `web/dashboard/` | sign-in and device list (`web/embed.go` builds them into the binary) |
+| `web/sw.js`, `web/offline.html` | service worker: shows the offline page when a page load can't reach the Mac at all; caches nothing else |
 | `scripts/` | `signing-identity.sh` (the local code-signing identity; embedded for `tailreach setup`) |
 | `tools/streamtest` | end-to-end check over the tailnet (gets a test session from the control socket) |
 | `tools/streambench` | WebRTC benchmark through a simulated bad network (drops, blackouts, rate changes) |
@@ -76,10 +79,13 @@ CGO_ENABLED=0 GOARCH=arm64 go vet ./... && CGO_ENABLED=0 GOARCH=arm64 go test ./
   - View only is enforced on the server: `forward` lets through only `viewOnlyCmds` (stream upkeep), uploads are refused, and the Mac's clipboard isn't sent. The viewer hiding controls is cosmetic.
   - Removing an invite, or it running out, ends the guest's sessions and streams at once (`endGuest`); `watchAuth` re-checks every minute. The panel names a guest, and a notification shows when one connects.
 - **Settings are only reachable over the Unix control socket,** with a peer-UID check. Never add network routes for them.
+  - The menu-bar item (`tailreach-capture --menubar`) talks only to that socket too; it has no network side. Quitting or hiding it never stops the server.
+- **Pause sharing is enforced on the server** (`sharingPaused`, saved as `paused` in `security.json`): `streamsBlocked` refuses every stream, VNC and upload until it's resumed, and open ones close with 4001 ("paused on the Mac").
+- **The service worker only ever serves the offline page** (and its icon), and only when a page load fails. Never cache signed-in pages or API replies, and keep page loads going to the network first (navigation preload). Bump `VERSION` in `sw.js` when the offline page changes.
 - **The one exception is `extend` / `unextend`** (handled in `stream.go`, never sent to the helper). They create or remove a virtual display, in a child process, as an extra screen only: never change which display is main or move the Mac's own displays (the one exception: the extended display is put back on the side it was last left, `vdisplay_place_darwin.go`). Keep them bounded (sizes, 30/60 Hz only, one at a time, no faster than every 2 s), and never change a virtual display's mode once open. The display always runs at 60 Hz; the 30/60 choice is the rate it's streamed at, so changing it restarts only the capture.
 - **`diag` with `ask` (permission prompts) is for `tailreach doctor` only,** over the control socket. `forward` strips `ask` from anything a viewer sends.
 - **One streaming device at a time.** A different device gets a `busy` event and close code 4002 and must ask again with `?take=1`; a displaced device gets 4003 (reason = who) and must not auto-reconnect. Claiming and kicking happen under one lock (`claimStream`).
-- **The Mac's Stop button must stick.** The stream closes with code 4001 and new streams are refused for 2 minutes.
+- **The Mac's Stop button must stick.** The stream closes with code 4001 and new streams are refused for 2 minutes. Stop Current Session in the menu bar does the same.
 - **The "Screen shared" panel is shown while anyone views,** and is excluded from capture.
 - **The helper always ends its capture session before exiting.** It runs in its own process group, and stops are made by closing its stdin, never by killing it outright. Otherwise macOS can leave a stuck "Unknown — Screen Recording" indicator.
 - **Sound only when the viewer switches it on** (⋯ → Sound, off by default). Only then does capture include audio (never the helper's own), and it goes over WebRTC only.

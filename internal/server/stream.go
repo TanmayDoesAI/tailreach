@@ -80,7 +80,7 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if streamsBlocked() {
-		http.Error(w, "stopped on the Mac", http.StatusLocked)
+		http.Error(w, blockedReason(), http.StatusLocked)
 		return
 	}
 	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{
@@ -125,7 +125,13 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 	defer extViewerLeft()
 	vncViewerJoined()
 	defer vncViewerLeft()
-	go func() { <-ctx.Done(); ws.CloseNow() }()
+	go func() {
+		<-ctx.Done()
+		if streamsBlocked() { // stopped or paused from the menu bar: say so, so it doesn't retry
+			ws.Close(closeStoppedOnMac, blockedReason())
+		}
+		ws.CloseNow()
+	}()
 	go a.watchAuth(ctx, r, cancel)
 
 	log.Printf("▶ stream started for %s", viewer)
@@ -606,10 +612,30 @@ const (
 	stopHold                               = 2 * time.Minute
 )
 
-var streamBlock atomic.Int64 // unix nanos until which new streams are refused
+var (
+	streamBlock   atomic.Int64 // unix nanos until which new streams are refused
+	sharingPaused atomic.Bool  // Pause sharing (menu bar): refused until resumed, saved in security.json
+)
 
 func blockStreams(d time.Duration) { streamBlock.Store(time.Now().Add(d).UnixNano()) }
-func streamsBlocked() bool         { return time.Now().UnixNano() < streamBlock.Load() }
+func streamsBlocked() bool {
+	return sharingPaused.Load() || time.Now().UnixNano() < streamBlock.Load()
+}
+
+// blockedReason is what the viewer is told when it's refused (it shows "paused" differently).
+func blockedReason() string {
+	if sharingPaused.Load() {
+		return "paused on the Mac"
+	}
+	return "stopped on the Mac"
+}
+
+// endStreams ends what's open after Stop or Pause in the menu bar, like the panel's Stop.
+// Each stream sees streamsBlocked and closes with closeStoppedOnMac, so it doesn't reconnect.
+func endStreams() {
+	stopAllSessions() // also locks a Mac unlocked from the phone again
+	go closeExtended()
+}
 
 // watchAuth re-checks the viewer's sign-in while a stream is open: a session that
 // expires, is signed out or revoked (or whose device trust is revoked) ends the stream.

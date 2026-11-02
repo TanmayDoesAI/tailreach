@@ -14,11 +14,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/crypto/argon2"
@@ -45,7 +44,10 @@ type trustEntry struct {
 }
 
 type secConfig struct {
-	KeepAwake       bool   `json:"keepAwake"` // stop the Mac sleeping (on power) so it stays reachable
+	KeepAwake       bool   `json:"keepAwake"`                // stop the Mac sleeping (on power) so it stays reachable; on unless chosen off
+	AwakeOnBattery  bool   `json:"awakeOnBattery,omitempty"` // ...and on battery too, down to batteryFloor
+	Paused          bool   `json:"paused,omitempty"`         // sharing paused from the menu bar: no streams until resumed
+	MenuBar         *bool  `json:"menuBar,omitempty"`        // nil = shown
 	PasswordEnabled bool   `json:"passwordEnabled"`
 	NoUpdateCheck   bool   `json:"noUpdateCheck,omitempty"` // don't ask GitHub for new releases
 	Hash            []byte `json:"hash,omitempty"`
@@ -55,6 +57,8 @@ type secConfig struct {
 type security struct {
 	mu        sync.Mutex
 	awake     *exec.Cmd
+	awakeMode string    // what awake holds: "" | "ac" | "all" (battery too)
+	power     powerInfo // as of the last applyKeepAwake
 	dir       string
 	cfg       secConfig
 	trust     []trustEntry
@@ -64,9 +68,11 @@ type security struct {
 
 func newSecurity(dir string) *security {
 	s := &security{dir: dir}
+	s.cfg.KeepAwake = true // a new install stays reachable; a choice already saved wins
 	if b, err := os.ReadFile(filepath.Join(dir, "security.json")); err == nil {
 		json.Unmarshal(b, &s.cfg)
 	}
+	sharingPaused.Store(s.cfg.Paused)
 	if b, err := os.ReadFile(filepath.Join(dir, "trusted.json")); err == nil {
 		json.Unmarshal(b, &s.trust)
 	}
@@ -78,23 +84,6 @@ func (s *security) saveLocked() {
 	os.WriteFile(filepath.Join(s.dir, "security.json"), b, 0o600)
 	b, _ = json.MarshalIndent(s.trust, "", "  ")
 	os.WriteFile(filepath.Join(s.dir, "trusted.json"), b, 0o600)
-}
-
-// applyKeepAwake holds a "no system sleep" assertion while on AC power, so the Mac
-// stays on the tailnet with the display off. Lid-closed / battery sleep still happens.
-func (s *security) applyKeepAwake() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.cfg.KeepAwake && s.awake == nil && runtime.GOOS == "darwin" {
-		c := exec.Command("caffeinate", "-s", "-w", strconv.Itoa(os.Getpid()))
-		if c.Start() == nil {
-			s.awake = c
-		}
-	} else if !s.cfg.KeepAwake && s.awake != nil {
-		s.awake.Process.Kill()
-		s.awake.Wait()
-		s.awake = nil
-	}
 }
 
 func hashPassword(pw string, salt []byte) []byte {
@@ -304,8 +293,14 @@ func stopAllSessions() {
 
 func ControlSocketPath(stateDir string) string { return filepath.Join(stateDir, "control.sock") }
 
-func (a *app) serveControl() {
-	path := ControlSocketPath(a.opt.stateDir)
+// The socket is up from the start, before Tailscale has signed in (the menu bar shows
+// that and the sign-in link); ctlApp is set once tailreach is ready for everything else.
+var (
+	ctlApp    atomic.Pointer[app]
+	signInURL atomic.Pointer[string] // the Tailscale sign-in link a first run waits on
+)
+
+func serveControl(path string) {
 	ln, err := listenControl(path)
 	if err != nil {
 		log.Printf("settings socket: %v", err)
@@ -320,11 +315,11 @@ func (a *app) serveControl() {
 			c.Close()
 			continue
 		}
-		go a.handleControl(c)
+		go handleControl(c)
 	}
 }
 
-func (a *app) handleControl(c net.Conn) {
+func handleControl(c net.Conn) {
 	defer c.Close()
 	sc := bufio.NewScanner(c)
 	sc.Buffer(make([]byte, 64<<10), 64<<10)
@@ -334,7 +329,15 @@ func (a *app) handleControl(c net.Conn) {
 		if json.Unmarshal(sc.Bytes(), &req) != nil {
 			return
 		}
-		enc.Encode(a.control(req))
+		if a := ctlApp.Load(); a != nil {
+			enc.Encode(a.control(req))
+			continue
+		}
+		st := map[string]any{"starting": true, "version": Version, "error": "tailreach is still signing in to Tailscale."}
+		if u := signInURL.Load(); u != nil {
+			st["authURL"] = *u
+		}
+		enc.Encode(st)
 	}
 }
 
@@ -375,10 +378,14 @@ func (a *app) control(req map[string]any) map[string]any {
 		if on {
 			stopAllSessions()
 		}
-	case "keepAwake":
+	case "keepAwake", "awakeOnBattery":
 		on, _ := req["enabled"].(bool)
 		s.mu.Lock()
-		s.cfg.KeepAwake = on
+		if op == "keepAwake" {
+			s.cfg.KeepAwake = on
+		} else {
+			s.cfg.AwakeOnBattery = on
+		}
 		s.saveLocked()
 		s.mu.Unlock()
 		s.applyKeepAwake()
@@ -394,6 +401,32 @@ func (a *app) control(req map[string]any) map[string]any {
 			default:
 			}
 		}
+	case "pause": // the menu bar's Pause sharing: no streams at all until resumed, even after a restart
+		on, _ := req["paused"].(bool)
+		s.mu.Lock()
+		s.cfg.Paused = on
+		s.saveLocked()
+		s.mu.Unlock()
+		sharingPaused.Store(on)
+		a.audit("sharing-paused", "this Mac", map[bool]string{true: "on", false: "off"}[on])
+		if on {
+			log.Printf("■ sharing paused on the Mac")
+			endStreams()
+		} else {
+			log.Printf("▶ sharing resumed")
+		}
+	case "stopStream": // the menu bar's Stop: the same as Stop on the panel
+		log.Printf("■ stopped from the Mac")
+		a.audit("stopped-on-mac", "this Mac", "")
+		blockStreams(stopHold)
+		endStreams()
+	case "menuBar":
+		on, _ := req["enabled"].(bool)
+		s.mu.Lock()
+		s.cfg.MenuBar = &on
+		s.saveLocked()
+		s.mu.Unlock()
+		setMenuBar(on)
 	case "revokeTrust":
 		id, _ := req["id"].(string)
 		s.mu.Lock()
@@ -531,9 +564,11 @@ func (a *app) control(req map[string]any) map[string]any {
 	st := map[string]any{
 		"passwordEnabled": s.cfg.PasswordEnabled,
 		"passwordSet":     len(s.cfg.Hash) > 0,
-		"keepAwake":       s.cfg.KeepAwake,
 		"trusted":         trust,
+		"paused":          s.cfg.Paused,
+		"menuBar":         s.cfg.MenuBar == nil || *s.cfg.MenuBar,
 	}
+	s.awakeStatus(st)
 	s.mu.Unlock()
 	passkeys := 0
 	if a.auth2 != nil {
@@ -562,7 +597,10 @@ func (a *app) control(req map[string]any) map[string]any {
 	st["name"] = a.opt.name
 	st["version"] = Version
 	st["debug"] = debugLog
-	st["ownDevices"] = a.ownDevices()
+	st["viewerURL"], st["dashboardURL"] = a.links()
+	if brief, _ := req["brief"].(bool); !brief { // the menu bar asks often and doesn't need it
+		st["ownDevices"] = a.ownDevices()
+	}
 	st["updateCheck"] = a.updateCheckOn()
 	st["updateCheckFlagOff"] = a.opt.noUpdateCheck
 	if up := a.updateNotice(); up != nil {
@@ -586,6 +624,20 @@ func (a *app) mode() string {
 		return "behindHub"
 	}
 	return "standalone"
+}
+
+// links are this Mac's viewer and the dashboard, as the owner opens them.
+func (a *app) links() (viewer, dashboard string) {
+	switch {
+	case a.opt.hub:
+		dashboard = "https://" + a.selfDNS + "/"
+		return dashboard + a.opt.name + "/", dashboard
+	case a.opt.via != "": // behind a hub: reached through it
+		dashboard = "https://" + a.opt.via + "." + a.domain + "/"
+		return dashboard + a.opt.name + "/", dashboard
+	}
+	dashboard = "https://" + a.selfDNS + "/"
+	return dashboard, dashboard
 }
 
 // ownDevices counts the owner's other devices on the tailnet (a phone, a laptop: what
