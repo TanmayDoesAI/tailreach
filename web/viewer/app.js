@@ -508,8 +508,18 @@ function directWorkerReady() {
   });
 }
 
+// Firefox's decoders (Media Foundation on Windows) can keep showing the old picture when the
+// size changes mid-stream, e.g. on switching to an extended display. A keyframe is decodable
+// on its own, so there a fresh decoder takes each one: keyframes are rare (start, a new size,
+// recovery), and every other browser keeps its decoder.
+const freshDecoderPerKey = /Firefox\//.test(navigator.userAgent);
+
 function directFeed({ data, key, ts }) {
   if (!directCfg) return;
+  if (key && directDec && freshDecoderPerKey) {
+    try { directDec.close(); } catch {}
+    directDec = null;
+  }
   if (!directDec) {
     // Joined mid-stream (the transform starts a moment after the video): ask for a keyframe.
     if (!key) { if (performance.now() - directAsked > 1000) { directAsked = performance.now(); send({ t: 'kf' }); } return; }
