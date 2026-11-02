@@ -242,6 +242,8 @@ Usage:
   tailreach settings             open the settings window on this Mac (password, trusted devices, sessions)
   tailreach password             set or reset the device password from a terminal (--off turns it off)
   tailreach invite LOGIN         let someone else in for a while (--hours N, --view-only; --list, --remove LOGIN)
+  tailreach forget NAME          a hub forgets a Mac behind it, so a reinstalled one can pair again
+  tailreach menubar on|off       show or hide the menu-bar icon
   tailreach doctor               check the setup and say how to fix what isn't right
 
 Flags:

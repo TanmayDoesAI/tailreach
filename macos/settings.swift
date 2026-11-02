@@ -83,6 +83,7 @@ final class ControlClient: ObservableObject {
     @Published var guestHours = 24
     @Published var guestViewOnly = true
     @Published var lastInvite: NewInvite?
+    @Published var starting = false // tailreach is up but still signing in to Tailscale
     @Published var guestMessage: String?
     private var timer: Timer?
 
@@ -96,12 +97,21 @@ final class ControlClient: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async {
             let reply = controlRoundTrip(self.path, req)
             DispatchQueue.main.async {
-                guard let reply, let st = try? JSONDecoder().decode(ControlState.self, from: reply) else {
+                guard let reply else {
                     self.offline = true
                     return
                 }
                 self.offline = false
                 let guestOp = ["invite", "uninvite"].contains(req["op"] as? String ?? "")
+                // Not a full status: still starting up, or just an error for this request.
+                let head = try? JSONDecoder().decode(ReplyHead.self, from: reply)
+                self.starting = head?.starting == true
+                guard !self.starting, let st = try? JSONDecoder().decode(ControlState.self, from: reply) else {
+                    if let err = head?.error, !self.starting {
+                        if guestOp { self.guestMessage = err } else { self.message = err }
+                    }
+                    return
+                }
                 if let err = st.error {
                     if guestOp { self.guestMessage = err } else { self.message = err }
                     return
@@ -123,6 +133,12 @@ final class ControlClient: ObservableObject {
     func invite() {
         send(["op": "invite", "login": guestLogin.trimmingCharacters(in: .whitespaces), "hours": guestHours, "viewOnly": guestViewOnly])
     }
+}
+
+/// The parts every control reply may have, even one that isn't a full status.
+struct ReplyHead: Decodable {
+    var starting: Bool?
+    var error: String?
 }
 
 /// One JSON line out to the control socket, one JSON line back (nil if tailreach isn't running).
@@ -164,6 +180,12 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            if control.starting {
+                Section {
+                    Label("tailreach is starting: signing in to Tailscale…", systemImage: "hourglass")
+                        .foregroundStyle(.secondary)
+                }
+            }
             if control.offline {
                 Section {
                     Label("tailreach isn't running on this Mac.", systemImage: "exclamationmark.triangle")

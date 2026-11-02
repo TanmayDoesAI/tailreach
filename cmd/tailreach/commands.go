@@ -172,3 +172,43 @@ This Mac shows who's connected while they view. End it any time:
 `, in["login"], exp.Local().Format("Mon Jan 2 15:04"), mode, in["admin"], in["machine"], in["login"], in["address"], in["code"], in["login"])
 	return nil
 }
+
+// forgetCmd lets a reinstalled (or replaced) Mac behind this hub pair again: the hub
+// forgets which Tailscale machine the name belonged to.
+func forgetCmd(args []string) error {
+	fs := flag.NewFlagSet("forget", flag.ExitOnError)
+	state := fs.String("state", server.DefaultStateDir(), "state directory of the running tailreach")
+	fs.Parse(args)
+	if fs.NArg() != 1 {
+		return errors.New("usage: tailreach forget NAME   (the Mac's name on the dashboard, e.g. mac2)")
+	}
+	st, err := controlCall(*state, map[string]any{"op": "forgetDevice", "name": fs.Arg(0)})
+	if err != nil {
+		return fmt.Errorf("tailreach isn't running: %v", err)
+	}
+	if e, _ := st["error"].(string); e != "" {
+		return errors.New(e)
+	}
+	fmt.Printf("✓ Forgot %s. The next machine that answers as %s is taken as it.\n", fs.Arg(0), fs.Arg(0))
+	return nil
+}
+
+// menuBarCmd shows or hides the menu-bar icon (tailreach keeps running either way).
+func menuBarCmd(args []string) error {
+	fs := flag.NewFlagSet("menubar", flag.ExitOnError)
+	state := fs.String("state", server.DefaultStateDir(), "state directory of the running tailreach")
+	fs.Parse(args)
+	on := fs.Arg(0) == "on"
+	if fs.NArg() != 1 || (!on && fs.Arg(0) != "off") {
+		return errors.New("usage: tailreach menubar on|off")
+	}
+	st, err := controlCall(*state, map[string]any{"op": "menuBar", "enabled": on})
+	if err != nil {
+		return fmt.Errorf("tailreach isn't running: %v", err)
+	}
+	if e, _ := st["error"].(string); e != "" {
+		return errors.New(e)
+	}
+	fmt.Println(map[bool]string{true: "✓ Menu-bar icon on", false: "✓ Menu-bar icon off (tailreach keeps running; `tailreach menubar on` brings it back)"}[on])
+	return nil
+}

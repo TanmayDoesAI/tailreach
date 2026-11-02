@@ -420,6 +420,12 @@ func (a *app) control(req map[string]any) map[string]any {
 		a.audit("stopped-on-mac", "this Mac", "")
 		blockStreams(stopHold)
 		endStreams()
+	case "forgetDevice": // `tailreach forget NAME`: a reinstalled Mac behind this hub can pair again
+		name, _ := req["name"].(string)
+		if !a.forgetDevice(sanitizeName(name)) {
+			return map[string]any{"error": "no Mac called " + name + " is known to this hub"}
+		}
+		a.audit("device-forgotten", "this Mac", name)
 	case "menuBar":
 		on, _ := req["enabled"].(bool)
 		s.mu.Lock()

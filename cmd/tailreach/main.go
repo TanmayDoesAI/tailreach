@@ -37,6 +37,12 @@ func main() {
 		case "invite":
 			exitOn(inviteCmd(os.Args[2:]))
 			return
+		case "forget":
+			exitOn(forgetCmd(os.Args[2:]))
+			return
+		case "menubar":
+			exitOn(menuBarCmd(os.Args[2:]))
+			return
 		case "settings":
 			exitOn(openSettings(os.Args[2:]))
 			return

@@ -537,6 +537,32 @@ func (a *app) pinNode(name, node, host string, peers map[string]bool) bool {
 	return true
 }
 
+// forgetDevice drops a device's pinned node (and its entry), so the next machine that
+// answers as that name is taken as it: a reinstall, or a Mac replaced by a new one.
+func (a *app) forgetDevice(name string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.nodePins == nil {
+		return false
+	}
+	_, pinned := a.nodePins[name]
+	_, known := a.devices[name]
+	if !pinned && !known {
+		return false
+	}
+	delete(a.nodePins, name)
+	delete(a.devices, name)
+	for k := range a.pinWarned {
+		if strings.HasPrefix(k, name+" ") {
+			delete(a.pinWarned, k)
+		}
+	}
+	b, _ := json.MarshalIndent(a.nodePins, "", "  ")
+	os.WriteFile(a.pinsPath(), b, 0o600)
+	log.Printf("✓ forgot %s: the next machine that answers as %s is taken as it", name, name)
+	return true
+}
+
 func (a *app) pinsPath() string { return filepath.Join(a.opt.stateDir, "device-nodes.json") }
 
 func (a *app) loadPins() {

@@ -97,7 +97,7 @@ With Homebrew, it's `tailreach setup --name mac2` (or `tailreach setup --name ma
 - **Pause Sharing:** no one can view this Mac until you resume it, even after a restart. Anyone viewing is disconnected and sees "Sharing is paused on the Mac".
 - **Stop Current Session** while someone is connected (like Stop on the panel).
 - **Keep Mac Reachable** (see [sleep](#lock-screen-sleep-and-restarts)), your guests, and an update when there is one.
-- **Settings…**, **Check Setup…** (`tailreach doctor` in Terminal) and **Hide Menu-Bar Icon**. Hiding it doesn't stop tailreach; turn it back on in `tailreach settings`.
+- **Settings…**, **Check Setup…** (`tailreach doctor` in Terminal) and **Hide Menu-Bar Icon**. Hiding it doesn't stop tailreach; `tailreach menubar on` (or `tailreach settings`) brings it back.
 
 **Touch controls.** The ◎/☝︎ button switches between trackpad mode and touch mode.
 
@@ -199,7 +199,7 @@ Every request has to pass all of these layers:
    - With no device password set, adding a passkey needs a 6-digit code shown on the Mac.
    - Sessions are HttpOnly, Secure, SameSite=Strict cookies. They expire after 12 h, or after 1 h idle.
 5. **Hub pinning.** Devices behind a hub only accept connections from that one hub. The hub's node ID is pinned the first time it connects.
-   - The hub pins each device's node the same way, and only ever forwards to that machine.
+   - The hub pins each device's node the same way, and only ever forwards to that machine. Reinstalled a Mac behind the hub? `tailreach forget NAME` on the hub lets it pair again.
    - The hub shows its own copy of the viewer for every device and forwards only the screen's live connections, without your cookies. A device can't set cookies or run its own page on the hub's address.
 6. **Origin checks.** Only pages from your tailnet can open screen sockets, and sign-in requests must come from the hub's own origin.
 7. **You see every session.** A **"Screen shared" panel** sits at the top right of the Mac while someone is connected. It shows who and for how long, and has a **Stop** button. The panel is left out of the stream.
