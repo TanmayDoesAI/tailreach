@@ -16,7 +16,7 @@ Go server with embedded Tailscale (`tsnet`), a Swift capture/input helper (`maco
 
 | Path | What |
 |---|---|
-| `cmd/tailreach/` | the command: `main.go` (subcommands, then `server.Serve`), `setup.go` (signs an installed copy, login item; the Homebrew formula lives in [TanmayDoesAI/homebrew-tailreach](https://github.com/TanmayDoesAI/homebrew-tailreach): update its `url` and `sha256` for each release tag), `install.go` (LaunchAgent), `doctor.go` (checks everything, prints each fix), `commands.go` (`settings`, `password`, `invite`, over the control socket) |
+| `cmd/tailreach/` | the command: `main.go` (subcommands, then `server.Serve`), `setup.go` (signs an installed copy, login item; a Homebrew copy is first copied to `~/Library/Application Support/tailreach/bin`, one path for every version, since macOS files a command-line program's permissions by path; old login items keep their flags except `--web-dir`/`-v`; the Homebrew formula lives in [TanmayDoesAI/homebrew-tailreach](https://github.com/TanmayDoesAI/homebrew-tailreach): update its `url` and `sha256` for each release tag), `install.go` (LaunchAgent), `doctor.go` (checks everything, prints each fix), `commands.go` (`settings`, `password`, `invite`, over the control socket) |
 | `internal/server/serve.go` | flags, tsnet startup, `Serve` |
 | `internal/server/server.go` | HTTP routes, Tailscale `WhoIs` owner check, hub ↔ device proxy (own viewer, dynamic endpoints only, no cookies, pinned nodes), discovery |
 | `internal/server/update.go` | once-a-day check for a newer release on GitHub (the only non-Tailscale request; `--no-update-check` / `updateCheck` op) |
@@ -28,6 +28,7 @@ Go server with embedded Tailscale (`tsnet`), a Swift capture/input helper (`maco
 | `internal/server/stream.go` | viewer WebSocket: control, input dispatch (`forward`), WS video/input fallback, bitrate steering |
 | `internal/server/rtc.go` | WebRTC (pion): video with true capture timestamps, NACK + RTCP reports only; queue probe (`sping`/`spong`); `input` (reliable) and `move` (unordered, no resends) data channels |
 | `internal/ratectl/` | the rate controller (cut fast, jump back to the last good rate, probe gently), the capture scale that follows it (`scale.go`) and the cap on retransmits; see `docs/streaming.md` |
+| `internal/server/logrotate*.go` | keeps `tailreach.log` (5 MB) and `audit.log` (1 MB) from growing forever: one older copy each |
 | `internal/server/debug*.go` | `dlog` and the `debug` build tag (`make DEBUG=1`) |
 | `internal/server/vrec.go` | measurement mode: the viewer's own receive stats, logged on the Mac (switched on from the control socket) |
 | `internal/server/vdisplay*.go` | extended display: a virtual second monitor (private CGVirtualDisplay via `go-macos/virtualdisplay`), child process `tailreach vdisplay` owns it, idle auto-close; never the main display |
