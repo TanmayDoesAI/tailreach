@@ -26,7 +26,7 @@ import (
 )
 
 // Version is this build's version.
-const Version = "0.2.0"
+const Version = "0.2.1"
 
 type options struct {
 	name          string
