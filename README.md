@@ -9,6 +9,7 @@ Control it from your phone on 5G, or turn a spare laptop, tablet or phone into a
 Nothing to install on the device you're viewing from, no port forwarding, no relay server, no accounts besides your own tailnet.
 
 - **Remote control** from an iPhone, iPad, Android phone or any laptop's browser: touch gestures, trackpad mode, a full keyboard, copy and paste of text both ways.
+- **Watch alongside:** while one device controls the Mac, others (yours, or an invited guest's) can watch the same screen, view only.
 - **Second screen:** any browser can become an extra display for the Mac. The Mac creates a real virtual monitor the size of that screen; drag windows onto it like a plugged-in one.
 - **Fast on bad networks:** hardware H.264 over WebRTC, with its own rate control built for mobile links that drop and come back. It cuts quickly, recovers in a couple of seconds and never builds up lag.
 - **Private by design:** traffic never leaves your tailnet. Every request is checked against your Tailscale identity, and there's a device password and passkeys on top.
@@ -131,7 +132,7 @@ Use a laptop's, tablet's or phone's browser as a second monitor for the Mac. Ope
 - **Refresh rate:** 30 Hz by default (plenty for documents, and light on the Mac); 60 Hz is a choice in the same panel. Switching while it's on keeps the display and its windows where they are.
 - **Where it sits:** drag it to any side in System Settings → Displays → Arrange, and it opens on that side every time after.
 - **Closing it:** **Exit** in the viewer closes it right away. If the connection just drops, it stays for 5 minutes so a reconnect finds your windows where you left them.
-- **One device at a time.** A second device is asked whether to take over. The first is told it was taken over and doesn't fight back. Taking over can also close the extended display.
+- **One device controls at a time.** A second device is asked whether to take over or just watch (view only, alongside; up to 4). A device taken over is told so and doesn't fight back. Taking over can also close the extended display.
 - **Caveats:**
   - It uses a private macOS API (`CGVirtualDisplay`), so a macOS update can break it.
   - The Mac keeps a small colour-profile file per display size, in the system ColorSync folder.
@@ -207,7 +208,7 @@ Every request has to pass all of these layers:
    - Everything is written to `~/Library/Application Support/tailreach/audit.log`.
 8. **Settings only on the Mac.** The settings window and the menu-bar icon talk to tailreach over a Unix socket that only your macOS user can open. Nothing about settings is reachable over the network.
 9. **Screen and input only.** Viewers can see the screen, point, type, scroll and use the clipboard (secrets copied from password managers are never sent). There is no way to run commands, browse or read files, or start background processes. Two extras: the extended display, which can only add an extra screen, and sending a file, which can only add a new file to Downloads.
-10. **One viewer at a time.** Another device has to ask to take over.
+10. **One device in control at a time.** Another device has to ask to take over, or can watch alongside, view only (enforced on the Mac; watchers never get the clipboard). The panel counts who's watching.
 11. **Stop means stop.** Pressing Stop on the Mac ends the session and refuses reconnects for 2 minutes. **Pause Sharing** in the menu bar refuses every viewer until you resume it.
     - Changing the password, revoking a device or resetting passkeys ends live sessions immediately.
 

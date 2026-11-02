@@ -1,6 +1,6 @@
 ---
 title: Using it
-description: Gestures, keyboard, second screen, lock screen, files and sound.
+description: Gestures, keyboard, second screen, watching, lock screen, files and sound.
 ---
 
 ## Touch and keys
@@ -9,7 +9,7 @@ The toolbar switches between **trackpad mode** (move a cursor, tap to click) and
 
 - **Two fingers:** tap to right-click, drag to scroll. **Pinch** to zoom.
 - **Three fingers:** swipe for Mission Control and Spaces, tap for the keyboard.
-- Keys arrive as real key presses, so shortcuts and held keys work. **⌘ ⌥ ⌃ ⇧** in the toolbar apply to the next key.
+- Keys arrive as real key presses, so shortcuts and held keys work, following the Mac's keyboard layout (AZERTY, QWERTZ…). Input methods (Japanese, Chinese, Korean) type as usual. **⌘ ⌥ ⌃ ⇧** in the toolbar apply to the next key.
 - The **⋯** panel has everything else: quality, frame rate, codec, sound, clipboard, Mission Control, Spotlight, Force Quit, Lock.
 
 Drag the toolbar by its grip to move it; tap the status pill to hide it.
@@ -35,6 +35,6 @@ Open tailreach on the laptop or tablet, tap the extended-display button and **St
 - **Clipboard:** **Copy** and **Paste** in **⋯**, both ways, text only (not images or files). Password-manager secrets are never sent.
 - **Sound:** off by default; **⋯ → Sound** turns it on.
 
-## Only one at a time
+## One controls, others can watch
 
-One device streams at a time. Another one is asked whether to take over. **Stop** on the Mac, or **Pause sharing** in the menu bar, ends it from the Mac's side.
+One device controls the Mac at a time. Another one is asked whether to **take over** or **just watch**: watching shows the same screen, view only, alongside whoever has control (up to 4 at once, guests too). A link ending in `?watch` (like `…/mac/?watch`) goes straight to watching. The Mac's panel counts who's watching, and **Stop** on the Mac, or **Pause sharing** in the menu bar, ends everyone's view.
