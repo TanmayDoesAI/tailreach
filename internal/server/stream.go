@@ -174,10 +174,12 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 		congested  atomic.Bool
 		drops      atomic.Int64
 		sentBytes  atomic.Int64
-		holdWS     atomic.Bool // the viewer is connecting WebRTC: no video on the WebSocket meanwhile
-		hevc       atomic.Bool // the viewer asked for HEVC (it checked it can decode it)
-		sound      atomic.Bool // the viewer turned sound on (WebRTC only)
+		holdWS     atomic.Bool  // the viewer is connecting WebRTC: no video on the WebSocket meanwhile
+		hevc       atomic.Bool  // the viewer asked for HEVC (it checked it can decode it)
+		sound      atomic.Bool  // the viewer turned sound on (WebRTC only)
+		scalePct   atomic.Int64 // capture size, % of what the viewer asked for (see ratectl/scale.go)
 	)
+	scalePct.Store(100)
 	bitrate.Store(rtcStartRate)
 	maxBitrate.Store(20_000_000)
 
@@ -309,6 +311,7 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 		t := time.NewTicker(250 * time.Millisecond)
 		defer t.Stop()
 		ctl := ratectl.New(rtcMinBitrate, maxBitrate.Load(), rtcStartRate)
+		sc := ratectl.NewScaler()
 		var cur *rtcSession
 		var sent [4]int64 // sentTotal at each of the last four ticks
 		var rrSeen int64  // the receiver report last taken into account
@@ -342,6 +345,14 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 				bitrate.Store(br)
 				toHelper(map[string]any{"t": "br", "bps": br})
 			}
+			// Low bitrate: fewer pixels, so text stays readable. Only once the link has
+			// shown a limit (CutAt): a still screen also sits at a low rate.
+			sc.HEVC = hevc.Load()
+			if pct := int64(sc.Step(time.Now(), br, ctl.CutAt > 0)*100 + 0.5); pct != scalePct.Load() {
+				dlog("capture scale %d%% → %d%% at %d kbps", scalePct.Load(), pct, br/1000)
+				scalePct.Store(pct)
+				toHelper(map[string]any{"t": "scale", "f": float64(pct) / 100})
+			}
 		}
 	}()
 
@@ -371,9 +382,10 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 			}
 			stats, _ := json.Marshal(map[string]any{
 				"t": "stats", "br": bitrate.Load(), "kbps": sentBytes.Swap(0) * 8 / 1000, "drops": drops.Swap(0), "path": path,
-				"rtc": viaRTC() != nil,
-				"rec": recordingViewer(),
-				"ctl": ctlState.Load(),
+				"rtc":   viaRTC() != nil,
+				"rec":   recordingViewer(),
+				"ctl":   ctlState.Load(),
+				"scale": float64(scalePct.Load()) / 100,
 			})
 			if recordingViewer() {
 				var m map[string]any
@@ -542,6 +554,7 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			c["br"] = min(bitrate.Load(), maxBitrate.Load())
+			c["scale"] = float64(scalePct.Load()) / 100 // a restart keeps the current scale
 			c["viewer"] = viewer
 			delete(c, "guest") // only ever set here, never by the viewer
 			delete(c, "viewOnly")

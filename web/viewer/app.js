@@ -49,7 +49,7 @@ let waitKey = true;
 let retry = 0;
 let stopped = false;   // Stop was pressed on the Mac: don't reconnect until asked
 let wakeLock = null;
-const stats = { frames: 0, fps: 0, rtt: 0, kbps: 0 };
+const stats = { frames: 0, fps: 0, rtt: 0, kbps: 0, scale: 1 };
 
 // ---------- connection ----------
 let hasFrame = false;   // once we've shown the screen, reconnects keep it up instead of a splash
@@ -652,6 +652,7 @@ function onEvent(ev) {
       stats.kbps = ev.kbps;
       stats.path = ev.path || '';
       stats.rec = !!ev.rec;
+      stats.scale = ev.scale || 1;   // the Mac captures fewer pixels on a slow link (layout and input don't care)
       document.body.classList.toggle('relayed', !!stats.path && stats.path !== 'direct');
       break;
     case 'pong': stats.rtt = Math.round(performance.now() - ev.at); break;
@@ -687,7 +688,7 @@ setInterval(() => {
       $('#statusText').textContent = `${stats.rtt} ms · ${stats.fps} fps${relayed ? ' · relayed' : ''}`;
       $('#status').classList.toggle('rtc', document.body.classList.contains('rtc'));
     }
-    $('#status').title = `${stats.path || 'unknown path'} · ${hevc ? 'HEVC' : 'H.264'} · ${stats.fps} fps · ${(stats.kbps / 1000).toFixed(1)} Mbps`;
+    $('#status').title = `${stats.path || 'unknown path'} · ${hevc ? 'HEVC' : 'H.264'} · ${stats.fps} fps · ${(stats.kbps / 1000).toFixed(1)} Mbps${stats.scale < 1 ? ` · ${Math.round(stats.scale * 100)}% res` : ''}`;
   }
 }, 1000);
 
