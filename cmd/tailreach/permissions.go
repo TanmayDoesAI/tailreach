@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"time"
+
+	"golang.org/x/term"
 )
 
 // grantPermissions walks someone through Screen Recording and Accessibility during
@@ -15,7 +17,7 @@ import (
 // cleanly when Screen Recording needs it, and checks again. It never changes a setting
 // itself, and only runs in a terminal: scripts and agents get doctor's report as before.
 func grantPermissions(stateDir, exe string) {
-	if fi, err := os.Stdin.Stat(); err != nil || fi.Mode()&os.ModeCharDevice == 0 {
+	if !term.IsTerminal(int(os.Stdin.Fd())) { // a real terminal (/dev/null counts as a device too)
 		return
 	}
 	if !waitForSignIn(stateDir) {

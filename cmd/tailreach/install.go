@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/TanmayDoesAI/tailreach/internal/server"
 )
@@ -61,7 +62,20 @@ func install(args []string) error {
 	}
 	domain := fmt.Sprintf("gui/%d", os.Getuid())
 	exec.Command("launchctl", "bootout", domain+"/"+launchLabel).Run()
-	if out, err := exec.Command("launchctl", "bootstrap", domain, plistPath()).CombinedOutput(); err != nil {
+	// bootout returns before the old one is fully gone (it lets tailreach end its capture
+	// cleanly first); loading the new one meanwhile fails with "Input/output error".
+	loaded := func() bool { return exec.Command("launchctl", "print", domain+"/"+launchLabel).Run() == nil }
+	for wait := time.Now().Add(10 * time.Second); loaded() && time.Now().Before(wait); {
+		time.Sleep(200 * time.Millisecond)
+	}
+	var out []byte
+	for try := 0; try < 5; try++ {
+		if out, err = exec.Command("launchctl", "bootstrap", domain, plistPath()).CombinedOutput(); err == nil {
+			break
+		}
+		time.Sleep(time.Second)
+	}
+	if err != nil {
 		return fmt.Errorf("launchctl: %v: %s", err, out)
 	}
 	fmt.Println("✓ tailreach will now start at login. Logs:", logFile)

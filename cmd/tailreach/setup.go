@@ -69,7 +69,9 @@ func setup(args []string) error {
 		}
 	}
 	if len(args) == 0 && len(was) > 0 {
-		if was[0] == launchPath(exe) {
+		// Already this copy and loaded: a restart is enough. (A login item file that isn't
+		// loaded, e.g. after an interrupted setup, is installed again below.)
+		if was[0] == launchPath(exe) && exec.Command("launchctl", "print", fmt.Sprintf("gui/%d/%s", os.Getuid(), launchLabel)).Run() == nil {
 			exec.Command("launchctl", "kickstart", "-k", fmt.Sprintf("gui/%d/%s", os.Getuid(), launchLabel)).Run()
 			fmt.Println("✓ login item restarted")
 			grantPermissions(server.DefaultStateDir(), exe)
