@@ -1,0 +1,66 @@
+name: Release
+
+# Publishing a release (tag vX.Y.Z) updates the Homebrew formula: it points it at the new
+# tag, builds and tests that formula on a Mac, and only then pushes it to the tap.
+# Needs the secret HOMEBREW_TAP_TOKEN: a fine-grained token with "Contents: read and write"
+# on TanmayDoesAI/homebrew-tailreach only.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish to the formula, e.g. v0.2.3'
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  formula:
+    runs-on: macos-latest
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: The tag matches the version in the code
+        run: |
+          want="${TAG#v}"
+          got=$(sed -n 's/^const Version = "\(.*\)"/\1/p' internal/server/serve.go)
+          [ "$got" = "$want" ] || { echo "serve.go says $got, the tag is $TAG"; exit 1; }
+
+      - name: Point the formula at the tag
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          [ -n "$TAP_TOKEN" ] || { echo "Add the HOMEBREW_TAP_TOKEN secret (see the top of this file)"; exit 1; }
+          git clone -q "https://x-access-token:${TAP_TOKEN}@github.com/TanmayDoesAI/homebrew-tailreach.git" tap
+          url="https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/${TAG}.tar.gz"
+          sha=$(curl -fsSL "$url" | shasum -a 256 | cut -d' ' -f1)
+          sed -i '' -E "s|^  url \".*\"|  url \"$url\"|; s|^  sha256 \".*\"|  sha256 \"$sha\"|" tap/Formula/tailreach.rb
+          git -C tap diff
+
+      - name: Build and test the formula
+        run: |
+          brew tap-new --no-git local/test
+          cp tap/Formula/tailreach.rb "$(brew --repository local/test)/Formula/"
+          brew install --build-from-source local/test/tailreach
+          brew test local/test/tailreach
+          brew audit --strict local/test/tailreach || true   # advisory: shown, not blocking
+
+      - name: Push the formula
+        run: |
+          cd tap
+          git diff --quiet && { echo "Formula already at $TAG"; exit 0; }
+          git config user.name "${GITHUB_ACTOR}"
+          git config user.email "${GITHUB_ACTOR_ID}+${GITHUB_ACTOR}@users.noreply.github.com"
+          git commit -qam "tailreach ${TAG#v}"
+          git push -q origin HEAD
