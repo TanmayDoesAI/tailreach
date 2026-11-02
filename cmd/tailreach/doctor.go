@@ -97,6 +97,13 @@ func doctor(args []string) error {
 	if v, _ := st["version"].(string); v != "" && v != server.Version {
 		d.warn(fmt.Sprintf("The running tailreach is %s, this one is %s", v, server.Version), restart)
 	}
+	if up, ok := st["update"].(map[string]any); ok {
+		how := "`git pull && make setup` in your clone"
+		if me == "tailreach" {
+			how = "`brew upgrade tailreach && tailreach setup`"
+		}
+		d.warn(fmt.Sprintf("tailreach %v is out (this is %v): %v", up["version"], st["version"], up["url"]), how)
+	}
 	if b, _ := st["debug"].(bool); b {
 		d.warn("Debug logging is on (a DEBUG=1 build)", "`make reload` for a normal build")
 	}

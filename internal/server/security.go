@@ -47,6 +47,7 @@ type trustEntry struct {
 type secConfig struct {
 	KeepAwake       bool   `json:"keepAwake"` // stop the Mac sleeping (on power) so it stays reachable
 	PasswordEnabled bool   `json:"passwordEnabled"`
+	NoUpdateCheck   bool   `json:"noUpdateCheck,omitempty"` // don't ask GitHub for new releases
 	Hash            []byte `json:"hash,omitempty"`
 	Salt            []byte `json:"salt,omitempty"`
 }
@@ -381,6 +382,18 @@ func (a *app) control(req map[string]any) map[string]any {
 		s.saveLocked()
 		s.mu.Unlock()
 		s.applyKeepAwake()
+	case "updateCheck": // the once-a-day "is there a newer tailreach?" question to GitHub
+		on, _ := req["enabled"].(bool)
+		s.mu.Lock()
+		s.cfg.NoUpdateCheck = !on
+		s.saveLocked()
+		s.mu.Unlock()
+		if on && a.updates != nil {
+			select {
+			case a.updates.kick <- struct{}{}:
+			default:
+			}
+		}
 	case "revokeTrust":
 		id, _ := req["id"].(string)
 		s.mu.Lock()
@@ -550,6 +563,11 @@ func (a *app) control(req map[string]any) map[string]any {
 	st["version"] = Version
 	st["debug"] = debugLog
 	st["ownDevices"] = a.ownDevices()
+	st["updateCheck"] = a.updateCheckOn()
+	st["updateCheckFlagOff"] = a.opt.noUpdateCheck
+	if up := a.updateNotice(); up != nil {
+		st["update"] = up
+	}
 	st["invites"] = []invite{}
 	if a.invites != nil {
 		st["invites"] = a.invites.active()

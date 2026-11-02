@@ -57,7 +57,7 @@ brew install tanmaydoesai/tailreach/tailreach
 tailreach setup
 ```
 
-Run `tailreach setup` again after each `brew upgrade tailreach`: Homebrew can't use your keychain while it builds, so `setup` is what signs the new copy and keeps macOS's permissions in place.
+When a new version is out, the dashboard and `tailreach doctor` say so. Run `tailreach setup` again after each `brew upgrade tailreach` (in a clone: `git pull && make setup`): Homebrew can't use your keychain while it builds, so `setup` is what signs the new copy and keeps macOS's permissions in place.
 
 There are no downloads: tailreach is built from source on your own Mac, and `make setup` (or `tailreach setup`) handles the rest. It builds tailreach, signs it with a local identity (so macOS remembers its permissions), and makes it start at login. It finishes with `tailreach doctor`, which checks everything and tells you what's left, with the exact fix for each:
 
@@ -181,6 +181,7 @@ Every request has to pass all of these layers:
    - Trust is tied to that device's Tailscale identity, so a copied cookie doesn't work anywhere else.
    - Five wrong tries lock it for 15 minutes and notify the Mac.
    - Set or reset it in the settings window (`./tailreach settings`) or from a terminal (`./tailreach password`; add `--off` to turn it off).
+   - **More than one computer:** the password is the hub's, one for all of them. Signing in on the hub opens every Mac behind it, and those Macs have no password of their own (`tailreach password` there says so).
 4. **Sign-in.** Use the device password, or a passkey (Face ID, Touch ID, Windows Hello) as a shortcut.
    - The device password alone signs you in, so a passkey problem never locks you out. Each device is offered its own passkey once, and **Not now** skips it.
    - **Sign out of this device** (in **⋯**, or on the device list) ends the session and forgets the device, so the password is asked again.
@@ -198,6 +199,8 @@ Every request has to pass all of these layers:
 10. **One viewer at a time.** Another device has to ask to take over.
 11. **Stop means stop.** Pressing Stop on the Mac ends the session and refuses reconnects for 2 minutes.
     - Changing the password, revoking a device or resetting passkeys ends live sessions immediately.
+
+**Update check.** Once a day, each Mac asks GitHub for the number of the latest tailreach release (`api.github.com`, over the normal internet). It's the only request tailreach makes besides Tailscale, and it sends nothing about you or the Mac beyond `tailreach/<version>`. A newer release shows on the dashboard, in `tailreach doctor` and in the log. Turn it off in the settings window, or with `--no-update-check`.
 
 **Permissions (first run on each Mac):** System Settings → Privacy & Security. Allow **Screen Recording** and **Accessibility** for `tailreach`.
 

@@ -42,6 +42,7 @@ type app struct {
 	auth2   *authState   // passkeys (hub / standalone)
 	invites *inviteStore // guests (hub / standalone only; nil behind a hub)
 	sec     *security    // device password + trusted devices
+	updates *updateChecker
 
 	hubMu sync.Mutex
 	hubID string // pinned StableID of the hub (devices behind a hub)
@@ -415,7 +416,11 @@ func (a *app) serveDevices(w http.ResponseWriter, r *http.Request) {
 		}
 		return list[i].Name < list[j].Name
 	})
-	writeJSON(w, map[string]any{"devices": list, "owner": a.owner, "hub": a.selfDNS})
+	out := map[string]any{"devices": list, "owner": a.owner, "hub": a.selfDNS}
+	if up := a.updateNotice(); up != nil {
+		out["update"] = up
+	}
+	writeJSON(w, out)
 }
 
 func (a *app) discoverLoop(ctx context.Context) {

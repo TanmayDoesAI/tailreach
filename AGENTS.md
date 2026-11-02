@@ -18,7 +18,8 @@ Go server with embedded Tailscale (`tsnet`), a Swift capture/input helper (`maco
 |---|---|
 | `cmd/tailreach/` | the command: `main.go` (subcommands, then `server.Serve`), `setup.go` (signs an installed copy, login item; the Homebrew formula lives in [TanmayDoesAI/homebrew-tailreach](https://github.com/TanmayDoesAI/homebrew-tailreach): update its `url` and `sha256` for each release tag), `install.go` (LaunchAgent), `doctor.go` (checks everything, prints each fix), `commands.go` (`settings`, `password`, `invite`, over the control socket) |
 | `internal/server/serve.go` | flags, tsnet startup, `Serve` |
-| `internal/server/server.go` | HTTP routes, Tailscale `WhoIs` owner check, hub ↔ device proxy, discovery |
+| `internal/server/server.go` | HTTP routes, Tailscale `WhoIs` owner check, hub ↔ device proxy (own viewer, dynamic endpoints only, no cookies, pinned nodes), discovery |
+| `internal/server/update.go` | once-a-day check for a newer release on GitHub (the only non-Tailscale request; `--no-update-check` / `updateCheck` op) |
 | `internal/server/auth.go` | passkeys (WebAuthn), sessions, pairing codes, guest invite-code sign-in, audit log |
 | `internal/server/invites.go` | guests: expiring invites for other Tailscale logins, one-time codes (hashed, single use, rate limited), `invites.json` |
 | `internal/server/security.go` | device password (Argon2id), 30-day device trust, live sessions, local control socket |
