@@ -21,5 +21,5 @@ Fixes go into the latest release. Upgrade with `brew upgrade tailreach && tailre
 
 The security model (what a viewer can and can't do, and the layers every request passes) is
 described in the [README](README.md#security) and on the
-[website](https://tailreach.tanmaylabs.me/docs/security/). The known gaps for multi-computer
-setups behind a hub are listed in [AGENTS.md](AGENTS.md#known-gaps-from-review-fix-before-advertising-multi-computer-use).
+[website](https://tailreach.tanmaylabs.me/docs/security/), and the rules the code keeps are the
+invariants in [AGENTS.md](AGENTS.md#invariants-dont-break-these).

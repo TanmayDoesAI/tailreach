@@ -26,10 +26,8 @@ export default defineConfig({
           items: [
             { label: 'Getting started', slug: 'docs/getting-started' },
             { label: 'Using it', slug: 'docs/using-it' },
-            { label: 'Guests', slug: 'docs/guests' },
-            { label: 'Security', slug: 'docs/security' },
+            { label: 'Security and guests', slug: 'docs/security' },
             { label: 'Troubleshooting', slug: 'docs/troubleshooting' },
-            { label: 'How the stream works', slug: 'docs/streaming' },
             { label: 'FAQ', slug: 'docs/faq' },
           ],
         },
