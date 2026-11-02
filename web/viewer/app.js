@@ -1294,7 +1294,33 @@ const KEY_NAMES = {
   ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down',
   Home: 'home', End: 'end', PageUp: 'pageup', PageDown: 'pagedown',
   F1: 'f1', F2: 'f2', F3: 'f3', F4: 'f4', F5: 'f5', F6: 'f6', F7: 'f7', F8: 'f8', F9: 'f9', F10: 'f10', F11: 'f11', F12: 'f12',
+  F13: 'f13', F14: 'f14', F15: 'f15', F16: 'f16', F17: 'f17', F18: 'f18', F19: 'f19',
+  Help: 'help', Insert: 'help', Clear: 'kpclear', CapsLock: 'capslock', Fn: 'fn',
 };
+// The keypad goes by position: its e.key is just "1", but the Mac has keypad keys of its own.
+const CODE_NAMES = {
+  Numpad0: 'kp0', Numpad1: 'kp1', Numpad2: 'kp2', Numpad3: 'kp3', Numpad4: 'kp4',
+  Numpad5: 'kp5', Numpad6: 'kp6', Numpad7: 'kp7', Numpad8: 'kp8', Numpad9: 'kp9',
+  NumpadDecimal: 'kp.', NumpadAdd: 'kp+', NumpadSubtract: 'kp-', NumpadMultiply: 'kp*', NumpadDivide: 'kp/',
+  NumpadEqual: 'kp=', NumpadEnter: 'kpenter', NumLock: 'kpclear',   // a Mac's Clear key reports NumLock
+};
+function keyName(e) {
+  const kp = CODE_NAMES[e.code];
+  // Only while it types (Num Lock off elsewhere makes it arrows and Home/End: those go by name).
+  if (kp && (e.key.length === 1 || e.key === 'Enter' || e.key === 'Clear')) return kp;
+  return KEY_NAMES[e.key];
+}
+
+// Caps Lock goes to the Mac as one toggle per press. Browsers on a Mac send its keydown when it
+// turns on and its keyup when it turns off (elsewhere both, each press), so follow the state.
+let capsOn = null;   // this keyboard's Caps Lock, as last seen
+function capsPressed(e) {
+  const now = e.getModifierState?.('CapsLock');
+  if (now === undefined) return e.type === 'keydown';
+  const changed = capsOn === null ? e.type === 'keydown' : now !== capsOn;
+  capsOn = now;
+  return changed;
+}
 
 function sendKey(k, extra = []) {
   send({ t: 'key', k, m: [...new Set([...mods(), ...extra])] });
@@ -1308,7 +1334,15 @@ function sendText(s) {
 // Physical keyboards (iPad Magic Keyboard, laptops) and special keys
 document.addEventListener('keydown', (e) => {
   if (e.target.closest?.('#more, #unlock')) return;   // typing into our own panel or the unlock field
-  const named = KEY_NAMES[e.key];
+  // An input method is composing (CJK, accents): its text arrives on compositionend below.
+  if (e.isComposing || e.keyCode === 229 || e.key === 'Process') return;
+  if (e.key === 'CapsLock') {
+    e.preventDefault();
+    if (capsPressed(e)) send({ t: 'key', k: 'capslock', m: [] });
+    return;
+  }
+  if (e.getModifierState) capsOn = e.getModifierState('CapsLock');
+  const named = keyName(e);
   const chord = e.metaKey || e.ctrlKey || e.altKey;
   const fromSoftKbd = e.target === kbd;
   // The on-screen keyboard's text, Enter and Backspace arrive via beforeinput below.
@@ -1331,6 +1365,10 @@ document.addEventListener('keydown', (e) => {
 // Let go by key position: e.key can differ by then (Shift let go first: ">" comes up as ".").
 const heldKeys = new Map();
 document.addEventListener('keyup', (e) => {
+  if (e.key === 'CapsLock' && !e.target.closest?.('#more, #unlock')) {
+    if (capsPressed(e)) send({ t: 'key', k: 'capslock', m: [] });
+    return;
+  }
   const h = heldKeys.get(e.code);
   if (!h) return;
   heldKeys.delete(e.code);
@@ -1363,13 +1401,33 @@ function resetKeyboardInput() {
   kbd.setSelectionRange(KBD_SENTINEL.length, KBD_SENTINEL.length);
 }
 
+// Input methods (Japanese, Chinese, Korean, and phone keyboards that compose words) edit the
+// field while composing: leave it alone until compositionend, then send what was committed.
+let composing = false;
+let committed = null;   // text just sent from compositionend; some browsers insert it again after
+kbd.addEventListener('compositionstart', () => { composing = true; });
+kbd.addEventListener('compositionend', (e) => {
+  composing = false;
+  const s = e.data || '';
+  if (s) sendText(s);
+  committed = s;
+  // Reset once this event is over, unless the next composition has begun (Hangul commits a
+  // syllable and starts the next one with the same key).
+  setTimeout(() => {
+    committed = null;
+    if (!composing) resetKeyboardInput();
+  });
+});
+
 kbd.addEventListener('beforeinput', (e) => {
+  if (composing || e.isComposing || /Composition/.test(e.inputType)) return;
   e.preventDefault();
   switch (e.inputType) {
     case 'insertText':
     case 'insertReplacementText':
     case 'insertFromPaste': {
       const s = e.data ?? e.dataTransfer?.getData('text/plain') ?? '';
+      if (s && s === committed && e.inputType === 'insertText') { committed = null; break; }   // sent already
       if (s) sendText(s);
       break;
     }
@@ -1382,7 +1440,7 @@ kbd.addEventListener('beforeinput', (e) => {
 });
 // Some keyboard edits aren't cancelable: restore the sentinel after the native edit
 // too, without forwarding it a second time.
-kbd.addEventListener('input', resetKeyboardInput);
+kbd.addEventListener('input', (e) => { if (!composing && !e.isComposing) resetKeyboardInput(); });
 // The extra keys row (and the room made for it) shows only once an on-screen keyboard has
 // actually come up: with a hardware keyboard (laptop, iPad keyboard) none does, and the
 // row would only shrink the screen. fitViewport() checks on every viewport resize.
