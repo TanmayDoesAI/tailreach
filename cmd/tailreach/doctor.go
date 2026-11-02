@@ -97,6 +97,13 @@ func doctor(args []string) error {
 	if v, _ := st["version"].(string); v != "" && v != server.Version {
 		d.warn(fmt.Sprintf("The running tailreach is %s, this one is %s", v, server.Version), restart)
 	}
+	if up, ok := st["update"].(map[string]any); ok {
+		how := "`git pull && make setup` in your clone"
+		if me == "tailreach" {
+			how = "`brew upgrade tailreach && tailreach setup`"
+		}
+		d.warn(fmt.Sprintf("tailreach %v is out (this is %v): %v", up["version"], st["version"], up["url"]), how)
+	}
 	if b, _ := st["debug"].(bool); b {
 		d.warn("Debug logging is on (a DEBUG=1 build)", "`make reload` for a normal build")
 	}
@@ -113,6 +120,14 @@ func doctor(args []string) error {
 			"install the Tailscale app on your phone, tablet or laptop and sign in with "+fmt.Sprint(st["owner"]))
 	case n > 0:
 		d.ok("%d other device(s) of yours on the tailnet", int(n))
+	}
+	switch st["mode"] {
+	case "hub":
+		d.ok("Hub: serves the dashboard, and its password and passkeys sign you in to every Mac behind it")
+	case "behindHub":
+		d.ok("Behind the hub %q: reached only through it, with the hub's password (set it on the hub)", fmt.Sprint(st["hub"]))
+	case "standalone":
+		d.ok("On its own: its own address, password and passkeys")
 	}
 	if b, _ := st["managesLogin"].(bool); b {
 		if set, _ := st["passwordSet"].(bool); set {

@@ -47,6 +47,7 @@ type trustEntry struct {
 type secConfig struct {
 	KeepAwake       bool   `json:"keepAwake"` // stop the Mac sleeping (on power) so it stays reachable
 	PasswordEnabled bool   `json:"passwordEnabled"`
+	NoUpdateCheck   bool   `json:"noUpdateCheck,omitempty"` // don't ask GitHub for new releases
 	Hash            []byte `json:"hash,omitempty"`
 	Salt            []byte `json:"salt,omitempty"`
 }
@@ -340,6 +341,10 @@ func (a *app) handleControl(c net.Conn) {
 func (a *app) control(req map[string]any) map[string]any {
 	op, _ := req["op"].(string)
 	s := a.sec
+	if (op == "setPassword" || op == "enablePassword") && a.auth2 == nil {
+		// Behind a hub, signing in happens on the hub, once for every Mac behind it.
+		return map[string]any{"error": "This Mac is reached through your hub (" + a.opt.via + "), so the password is set there: run `tailreach password` (or `tailreach settings`) on the hub. Signing in on the hub opens every Mac behind it."}
+	}
 	switch op {
 	case "status":
 		// handled below
@@ -377,6 +382,18 @@ func (a *app) control(req map[string]any) map[string]any {
 		s.saveLocked()
 		s.mu.Unlock()
 		s.applyKeepAwake()
+	case "updateCheck": // the once-a-day "is there a newer tailreach?" question to GitHub
+		on, _ := req["enabled"].(bool)
+		s.mu.Lock()
+		s.cfg.NoUpdateCheck = !on
+		s.saveLocked()
+		s.mu.Unlock()
+		if on && a.updates != nil {
+			select {
+			case a.updates.kick <- struct{}{}:
+			default:
+			}
+		}
 	case "revokeTrust":
 		id, _ := req["id"].(string)
 		s.mu.Lock()
@@ -536,17 +553,39 @@ func (a *app) control(req map[string]any) map[string]any {
 	st["url"] = "https://" + a.selfDNS + "/"
 	st["owner"] = a.owner
 	st["managesLogin"] = a.auth2 != nil
+	st["mode"] = a.mode()
+	if a.auth2 == nil {
+		st["hub"] = a.opt.via
+	}
 	st["https"] = a.https
 	st["screenSharing"] = a.vncUp()
 	st["name"] = a.opt.name
 	st["version"] = Version
 	st["debug"] = debugLog
 	st["ownDevices"] = a.ownDevices()
+	st["updateCheck"] = a.updateCheckOn()
+	st["updateCheckFlagOff"] = a.opt.noUpdateCheck
+	if up := a.updateNotice(); up != nil {
+		st["update"] = up
+	}
 	st["invites"] = []invite{}
 	if a.invites != nil {
 		st["invites"] = a.invites.active()
 	}
 	return st
+}
+
+// mode is how this Mac is reached: "hub" (it serves the dashboard and the sign-in for
+// every Mac behind it), "behindHub" (only through its hub, which signs viewers in), or
+// "standalone" (on its own, with its own sign-in).
+func (a *app) mode() string {
+	switch {
+	case a.opt.hub:
+		return "hub"
+	case a.auth2 == nil:
+		return "behindHub"
+	}
+	return "standalone"
 }
 
 // ownDevices counts the owner's other devices on the tailnet (a phone, a laptop: what

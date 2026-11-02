@@ -18,7 +18,8 @@ Go server with embedded Tailscale (`tsnet`), a Swift capture/input helper (`maco
 |---|---|
 | `cmd/tailreach/` | the command: `main.go` (subcommands, then `server.Serve`), `setup.go` (signs an installed copy, login item; the Homebrew formula lives in [TanmayDoesAI/homebrew-tailreach](https://github.com/TanmayDoesAI/homebrew-tailreach): update its `url` and `sha256` for each release tag), `install.go` (LaunchAgent), `doctor.go` (checks everything, prints each fix), `commands.go` (`settings`, `password`, `invite`, over the control socket) |
 | `internal/server/serve.go` | flags, tsnet startup, `Serve` |
-| `internal/server/server.go` | HTTP routes, Tailscale `WhoIs` owner check, hub ↔ device proxy, discovery |
+| `internal/server/server.go` | HTTP routes, Tailscale `WhoIs` owner check, hub ↔ device proxy (own viewer, dynamic endpoints only, no cookies, pinned nodes), discovery |
+| `internal/server/update.go` | once-a-day check for a newer release on GitHub (the only non-Tailscale request; `--no-update-check` / `updateCheck` op) |
 | `internal/server/auth.go` | passkeys (WebAuthn), sessions, pairing codes, guest invite-code sign-in, audit log |
 | `internal/server/invites.go` | guests: expiring invites for other Tailscale logins, one-time codes (hashed, single use, rate limited), `invites.json` |
 | `internal/server/security.go` | device password (Argon2id), 30-day device trust, live sessions, local control socket |
@@ -83,11 +84,13 @@ CGO_ENABLED=0 GOARCH=arm64 go vet ./... && CGO_ENABLED=0 GOARCH=arm64 go test ./
 - **The helper always ends its capture session before exiting.** It runs in its own process group, and stops are made by closing its stdin, never by killing it outright. Otherwise macOS can leave a stuck "Unknown — Screen Recording" indicator.
 - **Sound only when the viewer switches it on** (⋯ → Sound, off by default). Only then does capture include audio (never the helper's own), and it goes over WebRTC only.
 
-## Known gaps (from review; fix before advertising multi-computer use)
+- **Behind a hub, the hub signs everyone in** (one hub-wide password and passkeys). A device behind it trusts only its pinned hub (`fromHub`) and has no password of its own; `setPassword` / `enablePassword` are refused there.
+- **The hub never hands a device the browser's credentials or its origin.** For `/<name>/` it serves its own viewer files and forwards only `deviceEndpoints` (`stream`, `websockify`, `caps`, `upload`), to the node pinned for that name (`pinNode`, re-checked with `WhoIs` per request), with `Cookie`/`Authorization` stripped and `Set-Cookie` dropped (`stripProxyRequest` / `stripProxyResponse`). Keep it that way when adding endpoints.
+- **The update check sends nothing identifying** (only `User-Agent: tailreach/<version>`), and is the only request outside Tailscale. Keep the opt-out working.
 
-1. The hub proxy forwards the browser's cookies to devices and serves device HTML under the hub's origin. It should pin device node IDs, strip cookies and serve its own viewer bundle.
-2. A device's own password isn't enforced behind a hub. Either make the password hub-wide or forward and verify the viewer identity.
-3. Tests cover the stream rate control (`ratectl_test.go`), the bench proxy (`tools/streambench`), the invite store and guest sessions (`invites_test.go`, `guest_test.go`); nothing tests `WhoIs`-based auth or the hub end to end yet.
+## Known gaps
+
+1. Tests cover the stream rate control (`ratectl_test.go`), the bench proxy (`tools/streambench`), the invite store and guest sessions (`invites_test.go`, `guest_test.go`), the hub proxy's routing and header stripping (`hubproxy_test.go`) and the update check (`update_test.go`); nothing tests `WhoIs`-based auth or the hub end to end yet.
 
 ## Repo hygiene (the repo must be safe to make public at any time)
 

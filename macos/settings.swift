@@ -36,6 +36,12 @@ struct NewInvite: Decodable {
     let viewOnly: Bool
 }
 
+/// A newer tailreach release (the once-a-day check with GitHub).
+struct UpdateInfo: Decodable {
+    let version: String
+    let url: String
+}
+
 struct ControlState: Decodable {
     var passwordEnabled = false
     var passwordSet = false
@@ -46,6 +52,11 @@ struct ControlState: Decodable {
     var url = ""
     var owner = ""
     var managesLogin = true
+    var mode: String?          // "hub", "behindHub" or "standalone"
+    var hub: String?           // behind a hub: its name
+    var updateCheck: Bool?
+    var updateCheckFlagOff: Bool?
+    var update: UpdateInfo?
     var invites: [GuestInvite]?
     var invited: NewInvite?
     var error: String?
@@ -203,6 +214,11 @@ struct SettingsView: View {
                 } header: { Text("Face ID / passkeys") } footer: {
                     Text("A new device adds its passkey after entering the device password (or, with no password set, a code shown on this Mac).")
                 }
+            } else if control.state.mode == "behindHub" {
+                Section("Device password") {
+                    Text("This Mac is reached through your hub, \"\(control.state.hub ?? "devices")\". The password, passkeys and guests are set on the hub (tailreach settings or tailreach password there): signing in on the hub opens every Mac behind it.")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
             }
 
             if control.state.managesLogin {
@@ -215,6 +231,23 @@ struct SettingsView: View {
                     set: { control.send(["op": "keepAwake", "enabled": $0]) }))
             } header: { Text("Availability") } footer: {
                 Text("Stops the Mac sleeping on power so you can always reach it; the display still turns off. When it's locked, your phone can unlock it with the Mac password. After a restart, FileVault needs the password typed at the Mac once.")
+            }
+
+            Section {
+                if let up = control.state.update {
+                    Text("tailreach \(up.version) is out.").bold()
+                    if let link = URL(string: up.url) { Link("What's new", destination: link) }
+                    Text("Update: brew upgrade tailreach && tailreach setup (or git pull && make setup in a clone)")
+                        .font(.callout.monospaced()).textSelection(.enabled)
+                }
+                Toggle("Check for new versions once a day", isOn: Binding(
+                    get: { control.state.updateCheck ?? true },
+                    set: { control.send(["op": "updateCheck", "enabled": $0]) }))
+                    .disabled(control.state.updateCheckFlagOff ?? false)
+            } header: { Text("Updates") } footer: {
+                Text((control.state.updateCheckFlagOff ?? false)
+                    ? "Turned off with --no-update-check."
+                    : "Asks GitHub for the latest release number. It sends nothing about you or this Mac, and it's the only request tailreach makes besides Tailscale.")
             }
 
             Section("Live sessions") {

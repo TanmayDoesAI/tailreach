@@ -29,15 +29,16 @@ import (
 const Version = "0.2.0"
 
 type options struct {
-	name     string
-	hub      bool
-	hubName  string
-	vncAddr  string
-	stateDir string
-	webDir   string
-	allow    string
-	via      string
-	verbose  bool
+	name          string
+	hub           bool
+	hubName       string
+	vncAddr       string
+	stateDir      string
+	webDir        string
+	allow         string
+	via           string
+	verbose       bool
+	noUpdateCheck bool
 }
 
 // Serve runs tailreach with the given command-line flags until it fails.
@@ -55,6 +56,7 @@ func Serve(args []string) error {
 	fs.StringVar(&o.allow, "allow", "", "extra Tailscale logins allowed in, comma-separated (default: only the owner)")
 	fs.StringVar(&o.via, "via", "devices", "devices: only accept connections through this hub (\"\" = standalone, with its own Face ID login)")
 	fs.BoolVar(&o.verbose, "v", false, "verbose Tailscale logs")
+	fs.BoolVar(&o.noUpdateCheck, "no-update-check", false, "never ask GitHub whether a newer tailreach is out (the only request besides Tailscale's)")
 	fs.Usage = usage
 	fs.Parse(args)
 
@@ -64,7 +66,6 @@ func Serve(args []string) error {
 	}
 	return run(o)
 }
-
 
 func run(o options) error {
 	MigrateState()
@@ -139,6 +140,8 @@ func run(o options) error {
 		log.Printf("ℹ Running from a terminal: during sessions macOS will show that terminal app as sharing the screen. For everyday use run `tailreach install` instead.")
 	}
 	a.sec.applyKeepAwake()
+	a.updates = newUpdateChecker(Version)
+	go a.updateLoop(ctx)
 	go a.serveControl()
 	if o.hub || o.via == "" {
 		if a.auth2, err = newAuth(a.selfDNS, filepath.Join(o.stateDir, stateName), a.owner); err != nil {
@@ -175,6 +178,7 @@ func run(o options) error {
 	}
 
 	if o.hub {
+		a.loadPins()
 		a.loadKnown()
 		go a.discoverLoop(ctx)
 	}
@@ -279,4 +283,3 @@ func firstIPv4(ips []netip.Addr) string {
 	}
 	return ""
 }
-
