@@ -1,0 +1,60 @@
+name: Bug report
+description: Something doesn't work as described in the docs.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please check [Troubleshooting](https://tailreach.tanmaylabs.me/docs/troubleshooting/) first.
+        For a security problem, don't open an issue: use [private vulnerability reporting](https://github.com/TanmayDoesAI/tailreach/security/advisories/new) instead.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and Mac
+      description: "`sw_vers -productVersion` and `uname -m`, e.g. 15.3, arm64"
+    validations:
+      required: true
+  - type: input
+    id: viewer
+    attributes:
+      label: Viewing device and browser
+      description: e.g. iPhone 15, iOS 18, Safari (or Add to Home Screen); Pixel 8, Chrome
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How did you install it?
+      options:
+        - Homebrew (tailreach setup)
+        - From source (make setup)
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: tailreach version
+      description: "`tailreach version`"
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "`tailreach doctor` output"
+      description: |
+        Paste what `tailreach doctor` printed (`./tailreach doctor` in a clone).
+        It never prints your password, but **remove your tailnet name (`tailXXXXXX.ts.net`) and your e-mail** before posting.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else?
+      description: Screenshots, or relevant lines from `~/Library/Application Support/tailreach/tailreach.log` (with your tailnet name and e-mail removed).
