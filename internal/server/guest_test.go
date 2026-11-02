@@ -138,3 +138,20 @@ func TestRequireSessionForGuests(t *testing.T) {
 		}
 	}
 }
+
+func TestExpiresAt(t *testing.T) {
+	s := &authState{sessions: map[string]*session{}}
+	end := time.Now().Add(3 * time.Hour).Truncate(time.Second)
+	rec := httptest.NewRecorder()
+	s.startSessionFor(rec, "phone", "", end)
+	r := httptest.NewRequest("GET", "/", nil)
+	if !s.expiresAt(r).IsZero() {
+		t.Fatal("no cookie: want zero")
+	}
+	for _, c := range rec.Result().Cookies() {
+		r.AddCookie(c)
+	}
+	if got := s.expiresAt(r); !got.Equal(end) {
+		t.Fatalf("expiresAt = %v, want %v", got, end)
+	}
+}

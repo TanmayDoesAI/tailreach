@@ -120,6 +120,21 @@ func tokenHash(t string) string {
 // valid reports whether the request carries a live owner session, refreshing its idle timer.
 func (s *authState) valid(r *http.Request) bool { return s.validFor(r, "") }
 
+// expiresAt is when a request's session runs out at the latest (12 h, or a guest's end);
+// zero without one.
+func (s *authState) expiresAt(r *http.Request) time.Time {
+	c, err := r.Cookie(sessionCookie)
+	if err != nil {
+		return time.Time{}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if ss := s.sessions[tokenHash(c.Value)]; ss != nil {
+		return ss.expires
+	}
+	return time.Time{}
+}
+
 // validFor is valid for a guest's own session (guest = their login). An owner's session
 // never counts for a guest, nor a guest's for the owner.
 func (s *authState) validFor(r *http.Request, guest string) bool {

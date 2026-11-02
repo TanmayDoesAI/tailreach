@@ -482,6 +482,7 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 		default:
 		}
 	}
+	go a.warnBeforeSignOut(ctx, r, replyWS)
 
 	// browser → helper
 	for {
@@ -658,6 +659,25 @@ func (a *app) watchAuth(ctx context.Context, r *http.Request, cancel func()) {
 			return
 		}
 	}
+}
+
+// warnBeforeSignOut tells the viewer 10 minutes before its session runs out (12 h, or a
+// guest's end), so a long second-screen session doesn't just stop without warning.
+func (a *app) warnBeforeSignOut(ctx context.Context, r *http.Request, reply func([]byte)) {
+	if a.auth2 == nil {
+		return // behind a hub: the hub's session isn't known here
+	}
+	end := a.auth2.expiresAt(r)
+	if end.IsZero() {
+		return
+	}
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(max(0, time.Until(end)-10*time.Minute)):
+	}
+	b, _ := json.Marshal(map[string]any{"t": "expiring", "at": end.UnixMilli()})
+	reply(b)
 }
 
 // stillSignedIn re-checks a request's sign-in: the owner's password trust and session, or
