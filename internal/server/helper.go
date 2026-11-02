@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -33,11 +34,15 @@ type captureHelper struct {
 	dead  chan struct{}
 	ended atomic.Bool // kill was called: on its way out, don't hand it to a new viewer
 
-	mu    sync.Mutex
-	sink  func(typ byte, msg []byte) // the attached viewer, or nil
-	gen   int
-	stopT *time.Timer
-	killT *time.Timer
+	mu   sync.Mutex
+	sink func(typ byte, msg []byte) // the attached viewer, or nil
+	gen  int
+	// Devices watching alongside it (watch.go): they get the same output, never control it.
+	watchers map[int]func(typ byte, msg []byte)
+	wgen     int
+	started  []byte // the capture's last "started" event, for a watcher who joins later
+	stopT    *time.Timer
+	killT    *time.Timer
 }
 
 var helperState struct {
@@ -143,6 +148,27 @@ func (h *captureHelper) attach(sink func(byte, []byte)) (detach func()) {
 	}
 }
 
+// watch also hands the helper's output to a watcher until stop is called. Watchers don't
+// keep the capture going: that's the controlling viewer's (attach).
+func (h *captureHelper) watch(sink func(byte, []byte)) (stop func()) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.watchers == nil {
+		h.watchers = map[int]func(byte, []byte){}
+	}
+	h.wgen++
+	id := h.wgen
+	h.watchers[id] = sink
+	if h.started != nil {
+		go sink(3, h.started) // the picture's size and display, straight away
+	}
+	return func() {
+		h.mu.Lock()
+		delete(h.watchers, id)
+		h.mu.Unlock()
+	}
+}
+
 // scheduleIdle stops capturing a little after the viewer leaves, and ends the
 // process later still. Called with h.mu held.
 func (h *captureHelper) scheduleIdle() {
@@ -220,10 +246,22 @@ func (h *captureHelper) read(stdout io.Reader) {
 			return
 		}
 		h.mu.Lock()
+		if hdr[4] == 3 && bytes.Contains(buf, []byte(`"started"`)) {
+			h.started = buf
+		}
 		sink := h.sink
+		var watchers []func(byte, []byte)
+		if hdr[4] != 4 { // sound stays with the viewer who turned it on
+			for _, w := range h.watchers {
+				watchers = append(watchers, w)
+			}
+		}
 		h.mu.Unlock()
 		if sink != nil {
 			sink(hdr[4], buf)
+		}
+		for _, w := range watchers {
+			w(hdr[4], buf)
 		}
 	}
 }

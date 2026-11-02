@@ -46,6 +46,9 @@ final class SharePanel {
         panel.orderFrontRegardless()
     }
 
+    /// Other devices watching alongside the viewer (view only; watch.go in the server).
+    func setWatchers(_ n: Int) { model.watchers = max(0, n) }
+
     func hide() { panel.orderOut(nil) }
 }
 
@@ -61,6 +64,7 @@ final class PanelClock: ObservableObject {
     @Published var viewer = ""
     @Published var guest = "" // a guest's login; "" for the owner
     @Published var viewOnly = false
+    @Published var watchers = 0
     @Published var started = Date()
     @Published var pulse = false
     private var timer: Timer?
@@ -93,7 +97,7 @@ struct SharePanelView: View {
                 .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: pulse)
             VStack(alignment: .leading, spacing: 1) {
                 Text(title).font(.system(size: 13, weight: .semibold))
-                Text("\(viewer) · \(elapsed)")
+                Text("\(viewer)\(clock.watchers > 0 ? " + \(clock.watchers) watching" : "") · \(elapsed)")
                     .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
             }
             Spacer(minLength: 8)

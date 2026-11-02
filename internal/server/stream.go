@@ -102,6 +102,10 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 	if g := guestOf(r); g != nil {
 		guest, viewOnly = g.Login, g.ViewOnly
 	}
+	if r.URL.Query().Get("watch") == "1" { // alongside whoever has the Mac, view only (watch.go)
+		a.watchStream(ws, r, viewer, guest)
+		return
+	}
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	var kicked atomic.Bool               // another viewer took over: this stream may no longer touch the helper

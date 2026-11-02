@@ -128,6 +128,9 @@ async function canHevc() {
 }
 
 let takeNext = false;      // the next connection takes the Mac from whoever has it
+// Watching: the picture of whoever has the Mac, view only, alongside them (watch.go).
+let watchNext = false;     // the next connection only watches
+let watching = false;      // this one is watching
 let closeExtNext = false;  // ...and removes the extended display once it's in
 
 function connect() {
@@ -139,6 +142,9 @@ function connect() {
   if (long) retryButton('Try now');
   const url = new URL('stream', location.href);
   if (takeNext) url.searchParams.set('take', '1');
+  watching = watchNext;
+  if (watching) url.searchParams.set('watch', '1');
+  markWatching();
   url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   ws = new WebSocket(url);
   ws.binaryType = 'arraybuffer';
@@ -165,6 +171,7 @@ function connect() {
     if (e.code === 4001) return stoppedOnMac(e.reason);
     if (e.code === 4002) return inUse(e.reason);
     if (e.code === 4003) return takenOver(e.reason);
+    if (e.code === 4004) return watchEnded(e.reason);
     if (!opened && retry >= 1) {
       // Refused before it opened: find out why instead of retrying blindly.
       const r = await fetch('stream', { cache: 'no-store' }).catch(() => null);
@@ -197,6 +204,29 @@ function inUse(by) {
   $('#busyBy').textContent = by || 'another device';
   $('#busyExt').classList.toggle('hidden', !busyInfo.extended);
   $('#busy').classList.remove('hidden');
+}
+
+function watchInstead() {
+  $('#busy').classList.add('hidden');
+  watchNext = true;
+  stopped = false;
+  retry = 0;
+  connect();
+}
+
+function markWatching(by) {
+  document.body.classList.toggle('view-only', watching || !!caps.viewOnly);
+  $('#viewOnlyPill').textContent = watching ? (by ? `Watching · ${by} has control` : 'Watching') : 'View only';
+}
+
+// Whoever had the Mac left (or there was nobody): offer to connect normally.
+function watchEnded(reason) {
+  stopped = true;
+  hasFrame = false;
+  watching = watchNext = false;
+  markWatching();
+  setState('off', reason ? reason[0].toUpperCase() + reason.slice(1) + '.' : 'Nothing to watch.');
+  retryButton('Connect');
 }
 
 function leaveBusy(take, closeExt) {
@@ -252,7 +282,8 @@ const OVER_RTC = new Set(['rel', 'btn', 'click', 'scroll', 'key', 'text', 'media
 // A view-only guest sends only what keeps the stream going (the Mac enforces the same).
 const VIEW_ONLY_SENDS = new Set(['start', 'kf', 'resend', 'ping', 'spong', 'bye', 'vstats', 'dlog', 'rtc-offer', 'rtc-off']);
 function send(obj) {
-  if (caps.viewOnly && !VIEW_ONLY_SENDS.has(obj.t)) return;
+  if ((caps.viewOnly || watching) && !VIEW_ONLY_SENDS.has(obj.t)) return;
+  if (watching && (obj.t === 'start' || obj.t.startsWith('rtc'))) return;   // the picture is someone else's stream
   const dc = obj.t === 'abs' ? moveDC : OVER_RTC.has(obj.t) ? inputDC : null;
   // While WebRTC is reconnecting (pc 'disconnected'), the WebSocket may still get through.
   if (dc?.readyState === 'open' && pc?.connectionState === 'connected') { dc.send(JSON.stringify(obj)); return; }
@@ -377,7 +408,7 @@ let moveDC = null;    // unordered, never resent
 function rtcWanted() { return !!window.RTCPeerConnection && store.get('transport', 'auto') !== 'ws'; }
 
 async function startRTC(keepPicture = false) {
-  if (!rtcWanted()) return;
+  if (!rtcWanted() || watching) return;   // a watcher's picture comes over the WebSocket
   stopRTC(false, keepPicture);
   try {
     // tailnet only: no STUN/TURN. Direct video in Chrome needs the encoded-streams switch.
@@ -726,6 +757,7 @@ function onEvent(ev) {
       clearTimeout(onMacClipboard.t);
       break;
     case 'clip': onMacClipboard(ev); break;
+    case 'watching': markWatching(ev.by); break;
     case 'expiring': {   // the sign-in's 12 h (or a guest's time) is nearly up
       const at = new Date(ev.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
       $('#toastText').textContent = `Your sign-in ends at ${at}. You’ll be asked to sign in again then.`;
@@ -1515,7 +1547,7 @@ function flash(msg) {
 // password), and with view only nothing that would reach the Mac.
 function markGuest() {
   document.body.classList.add('guest');
-  document.body.classList.toggle('view-only', !!caps.viewOnly);
+  document.body.classList.toggle('view-only', !!caps.viewOnly || watching);
   $('#unlock .sub').textContent = 'The Mac is locked. Only its owner can unlock it.';
 }
 
@@ -1663,6 +1695,7 @@ const actions = {
   fit: () => fitMode('fit'),
   fillScreen: () => fitMode('fill'),
   busyTake: () => leaveBusy(true, false),
+  busyWatch: () => watchInstead(),
   busyTakeClose: () => leaveBusy(true, true),
   busyNo: () => leaveBusy(false, false),
   extendPanel: () => openExtend(true),

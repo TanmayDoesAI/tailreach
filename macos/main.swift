@@ -747,6 +747,9 @@ func handle(_ c: [String: Any]) {
                                 cursor: !localCursor, display: display, hevc: c["codec"] as? String == "hevc",
                                 sound: c["audio"] as? Bool ?? false, scale: scaleFactor(num(c["scale"])))
         }
+    case "watchers": // sent by tailreach only (never forwarded from a viewer): how many watch alongside
+        let n = Int(num(c["n"]))
+        DispatchQueue.main.async { panel.setWatchers(n) }
     case "stop":
         inputQ.async { input.releaseAll() }
         Task {
