@@ -68,6 +68,15 @@ function setState(state, text) {
 
 let lostSince = 0, retryTimer = 0;   // when the connection dropped (while it's retried), and the next try
 
+// Still failing after half a minute: say why it might be, instead of "Reconnecting" forever,
+// on the full screen (not just the pill over the last picture), with a button to try now.
+const unreachable = () => lostSince && performance.now() - lostSince > 30000;
+function reconnectText() {
+  if (!unreachable()) return retry ? 'Reconnecting' : 'Connecting';
+  hasFrame = false;
+  return 'Can’t reach your Mac. Is it awake, and is Tailscale connected on this device? Still trying…';
+}
+
 // A button on the splash that connects again right away.
 function retryButton(label, again = connect) {
   splashAction(label, '');
@@ -129,17 +138,14 @@ async function canHevc() {
 
 let takeNext = false;      // the next connection takes the Mac from whoever has it
 // Watching: the picture of whoever has the Mac, view only, alongside them (watch.go).
-let watchNext = false;     // the next connection only watches
+let watchNext = new URLSearchParams(location.search).has('watch');   // the next connection only watches (…/mac/?watch: a link to just watch)
 let watching = false;      // this one is watching
 let closeExtNext = false;  // ...and removes the extended display once it's in
 
 function connect() {
   if (ws || stopped) return;
-  // Still failing after half a minute: say why it might be, instead of "Reconnecting" forever.
-  const long = lostSince && performance.now() - lostSince > 30000;
-  setState('connecting', long ? 'Can’t reach your Mac. Is it awake, and is Tailscale connected on this device? Still trying…'
-    : retry ? 'Reconnecting' : 'Connecting');
-  if (long) retryButton('Try now');
+  setState('connecting', reconnectText());
+  if (unreachable()) retryButton('Try now');
   const url = new URL('stream', location.href);
   if (takeNext) url.searchParams.set('take', '1');
   watching = watchNext;
@@ -180,7 +186,7 @@ function connect() {
     }
     if (document.visibilityState === 'visible') {
       lostSince ||= performance.now();
-      setState('connecting', 'Reconnecting');
+      setState('connecting', reconnectText());
       clearTimeout(retryTimer);
       retryTimer = setTimeout(connect, Math.min(5000, 300 * 2 ** retry++));
     }
@@ -340,10 +346,17 @@ function onBinary(buf) {
       output: drawFrame,
       error: (err) => { console.warn('decoder', err); resetDecoder(); send({ t: 'resend' }); },
     });
-    decoder.configure({
-      codec: cfg.codec, codedWidth: cfg.w, codedHeight: cfg.h, description,
-      optimizeForLatency: true, hardwareAcceleration: 'prefer-hardware',
-    });
+    // 'prefer-hardware' means hardware only in Chrome: a device without a hardware decoder
+    // for this (an old laptop, Linux without VA-API) would get no picture at all.
+    const dcfg = { codec: cfg.codec, codedWidth: cfg.w, codedHeight: cfg.h, description, optimizeForLatency: true };
+    const dec = decoder;
+    VideoDecoder.isConfigSupported({ ...dcfg, hardwareAcceleration: 'prefer-hardware' })
+      .then((r) => r.supported, () => false)
+      .then((hw) => {
+        if (decoder !== dec || dec.state === 'closed') return;
+        dec.configure({ ...dcfg, hardwareAcceleration: hw ? 'prefer-hardware' : 'no-preference' });
+        send({ t: 'kf' });   // the keyframe that came with the config may have gone by meanwhile
+      });
     if (canvas.width !== cfg.w || canvas.height !== cfg.h) {
       canvas.width = cfg.w;
       canvas.height = cfg.h;
@@ -385,6 +398,7 @@ function paint() {
   const frame = pendingFrame;
   pendingFrame = null;
   if (!frame) return;
+  if (stopped) { frame.close(); return; }   // decoded just as the session ended: don't say "Connected" again
   ctx2d.drawImage(frame, 0, 0, canvas.width, canvas.height);
   frame.close();
   stats.frames++;
@@ -1779,7 +1793,7 @@ let extBusy = false;
 // Mac decides and bounds it (vdisplay.go extSizeFor); this mirrors it for the panel.
 function extSpec() {
   const dpr = devicePixelRatio || 1, cw = screen.width, ch = screen.height;
-  const retina = dpr >= 1.5;
+  const retina = false;   // the Mac doesn't open Retina extended displays yet (retinaExtended in vdisplay.go)
   const f = retina ? Math.min(1, 1920 / cw, 1200 / ch) : dpr;
   return { cw, ch, dpr, retina, w: Math.round(cw * f) & ~1, h: Math.round(ch * f) & ~1, hz: settings.extHz };
 }

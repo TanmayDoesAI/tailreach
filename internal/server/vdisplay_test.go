@@ -35,6 +35,9 @@ func TestExtSizeFor(t *testing.T) {
 		{"negative", -5, -5, -1180, 820, 2, extSize{640, 480, false}},
 	}
 	for _, c := range cases {
+		if c.want.hidpi && !retinaExtended {
+			continue // Retina extended displays are off for now (retinaExtended)
+		}
 		got := extSizeFor(c.w, c.h, c.cw, c.ch, c.dpr)
 		if got != c.want {
 			t.Errorf("%s: got %+v, want %+v", c.name, got, c.want)

@@ -119,9 +119,16 @@ const (
 // extSizeFor turns the viewer's ask into a bounded display size. cw x ch is its screen in
 // CSS pixels and dpr its device pixel ratio; without them (an older viewer) w x h is the
 // 1x pixel size it wants.
+// retinaExtended is off: offered the Retina modes, macOS (26) starts the display in the
+// low-resolution mode of the same point size instead (1280x800 points at 1280x800 pixels
+// for a 2560x1600 ask), which virtualdisplay rightly refuses, so a Retina viewer would just
+// wait through two failed displays before getting the 1x one. Getting Retina needs the mode
+// set after opening, which virtualdisplay never does (see the extended-display invariant).
+const retinaExtended = false
+
 func extSizeFor(w, h, cw, ch, dpr float64) extSize {
 	px := func(v float64) uint32 { return uint32(min(max(math.Round(v), 0), 1<<16)) }
-	if cw > 0 && ch > 0 && dpr >= extRetinaDPR && dpr <= 8 {
+	if retinaExtended && cw > 0 && ch > 0 && dpr >= extRetinaDPR && dpr <= 8 {
 		// Shrunk to fit keeping its shape (clicks are mapped by fraction of the screen, so
 		// a stretched desktop would feel off), even sizes. The pixel size is twice the
 		// points: that's the Retina mode virtualdisplay advertises for a HiDPI display.
