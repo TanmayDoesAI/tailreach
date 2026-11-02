@@ -66,6 +66,23 @@ function setState(state, text) {
   $('#statusText').textContent = text;
 }
 
+let lostSince = 0, retryTimer = 0;   // when the connection dropped (while it's retried), and the next try
+
+// A button on the splash that connects again right away.
+function retryButton(label, again = connect) {
+  splashAction(label, '');
+  const a = $('#splashAction');
+  a.onclick = (e) => {
+    e.preventDefault();
+    a.classList.add('hidden');
+    a.onclick = null;
+    stopped = false;
+    retry = 0;
+    clearTimeout(retryTimer);
+    again();
+  };
+}
+
 function splashAction(label, href) {
   const a = $('#splashAction');
   a.textContent = label;
@@ -115,7 +132,11 @@ let closeExtNext = false;  // ...and removes the extended display once it's in
 
 function connect() {
   if (ws || stopped) return;
-  setState('connecting', retry ? 'Reconnecting' : 'Connecting');
+  // Still failing after half a minute: say why it might be, instead of "Reconnecting" forever.
+  const long = lostSince && performance.now() - lostSince > 30000;
+  setState('connecting', long ? 'Can’t reach your Mac. Is it awake, and is Tailscale connected on this device? Still trying…'
+    : retry ? 'Reconnecting' : 'Connecting');
+  if (long) retryButton('Try now');
   const url = new URL('stream', location.href);
   if (takeNext) url.searchParams.set('take', '1');
   url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -124,6 +145,7 @@ function connect() {
 
   ws.onopen = () => {
     retry = 0;
+    lostSince = 0;
     extBusy = false;
     if (takeNext && closeExtNext) send({ t: 'unextend' });
     takeNext = closeExtNext = false;
@@ -150,8 +172,10 @@ function connect() {
       if (r?.status === 423) return stoppedOnMac(await r.text().catch(() => ''));
     }
     if (document.visibilityState === 'visible') {
+      lostSince ||= performance.now();
       setState('connecting', 'Reconnecting');
-      setTimeout(connect, Math.min(5000, 300 * 2 ** retry++));
+      clearTimeout(retryTimer);
+      retryTimer = setTimeout(connect, Math.min(5000, 300 * 2 ** retry++));
     }
   };
 }
@@ -690,16 +714,25 @@ function onEvent(ev) {
     case 'error':
       if (locked) break;   // capture pauses while the Mac is locked; that's expected
       setState('off', ev.needsPermission
-        ? 'Allow Screen Recording for tailreach-capture on the Mac (System Settings → Privacy & Security).'
+        ? 'Allow Screen Recording for tailreach on the Mac (System Settings → Privacy & Security), then try again.'
         : `Mac: ${ev.msg}`);
+      // Still connected: asking the Mac to start the capture again is enough.
+      retryButton('Try again', () => { setState('connecting', 'Connecting'); sendStart(); });
       break;
     case 'warn':
       // Input blocked on the Mac: say so instead of letting the local cursor pretend.
-      $('#toastText').textContent = 'Mac is blocking input. Allow tailreach-capture in Privacy & Security → Accessibility.';
+      $('#toastText').textContent = 'Mac is blocking input. Allow tailreach in Privacy & Security → Accessibility.';
       $('#toast').classList.remove('hidden');
       clearTimeout(onMacClipboard.t);
       break;
     case 'clip': onMacClipboard(ev); break;
+    case 'expiring': {   // the sign-in's 12 h (or a guest's time) is nearly up
+      const at = new Date(ev.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      $('#toastText').textContent = `Your sign-in ends at ${at}. You’ll be asked to sign in again then.`;
+      $('#toast').classList.remove('hidden');
+      clearTimeout(onMacClipboard.t);
+      break;
+    }
   }
 }
 
