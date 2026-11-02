@@ -18,6 +18,9 @@ func grantPermissions(stateDir, exe string) {
 	if fi, err := os.Stdin.Stat(); err != nil || fi.Mode()&os.ModeCharDevice == 0 {
 		return
 	}
+	if !waitForSignIn(stateDir) {
+		return
+	}
 	p := diagWhenReady(stateDir, true) // also puts tailreach in both lists
 	in := bufio.NewReader(os.Stdin)
 	for round := 0; p != nil; round++ {
@@ -79,4 +82,34 @@ func diagWhenReady(stateDir string, ask bool) map[string]any {
 			return nil
 		}
 	}
+}
+
+// waitForSignIn: on a first run tailreach needs a Tailscale sign-in before anything else
+// works. Open the link and wait for it here, so one `tailreach setup` goes all the way
+// through. False if it isn't done (Ctrl-C, or 10 minutes): doctor then shows the link.
+func waitForSignIn(stateDir string) bool {
+	var link string
+	for wait := time.Now().Add(20 * time.Second); time.Now().Before(wait); time.Sleep(time.Second) {
+		if st, err := controlCall(stateDir, map[string]any{"op": "status"}); err == nil && st["starting"] != true {
+			return true // up and signed in
+		}
+		if link = signInLink(stateDir); link != "" {
+			break
+		}
+	}
+	if link == "" {
+		return true // not up yet: let the permission step wait for it, and doctor explain
+	}
+	fmt.Println()
+	fmt.Println("Sign in to Tailscale to put this Mac on your tailnet (no account? the page makes one, free):")
+	fmt.Println("  " + link)
+	fmt.Println("Opening it in your browser… waiting for you to approve it (Ctrl-C to do it later)")
+	exec.Command("open", link).Run()
+	for wait := time.Now().Add(10 * time.Minute); time.Now().Before(wait); time.Sleep(2 * time.Second) {
+		if signInLink(stateDir) == "" {
+			fmt.Println("✓ signed in to Tailscale")
+			return true
+		}
+	}
+	return false
 }
