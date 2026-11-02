@@ -55,6 +55,7 @@ func setup(args []string) error {
 		if was[0] == launchPath(exe) {
 			exec.Command("launchctl", "kickstart", "-k", fmt.Sprintf("gui/%d/%s", os.Getuid(), launchLabel)).Run()
 			fmt.Println("✓ login item restarted")
+			grantPermissions(server.DefaultStateDir(), exe)
 			return doctor(nil)
 		}
 		args = was[1:]
@@ -65,6 +66,7 @@ func setup(args []string) error {
 	if err := install(args); err != nil {
 		return err
 	}
+	grantPermissions(server.DefaultStateDir(), exe)
 	return doctor(nil)
 }
 

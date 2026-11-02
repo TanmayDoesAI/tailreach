@@ -20,7 +20,7 @@ tailreach setup
 
 Or from source, with [Go](https://go.dev/dl/) installed: `git clone https://github.com/TanmayDoesAI/tailreach.git && cd tailreach && make setup` (the command is then `./tailreach`).
 
-`setup` builds tailreach on your Mac, signs it, adds a login item and runs `tailreach doctor`. Run it again after every `brew upgrade`.
+`setup` signs tailreach, adds a login item, walks you through the two macOS permissions (it opens the right Settings pane and waits for you), then runs `tailreach doctor`. Run it again after every `brew upgrade`.
 
 ## Finish with `tailreach doctor`
 
