@@ -23,12 +23,21 @@ const points = [
 ];
 
 // '' = not verified, shown as a dot. Corrections welcome.
-const cols = ['Viewer is just a browser', 'Second monitor', 'Open source', 'Free'];
+// A superscript points at a note under the table.
+const cols = ['Viewer is just a browser', 'Second monitor', 'Unlock from the lock screen', 'No port forwarding or server to run', 'Open source', 'Free'];
 const rows = [
-  { name: 'tailreach', cells: ['Yes', 'Yes', 'Yes', 'Yes'], us: true },
-  { name: 'Chrome Remote Desktop', cells: ['Desktop only', 'No', 'No', 'Yes'] },
-  { name: 'Parsec', cells: ['', '', 'No', 'Personal use'] },
-  { name: 'RustDesk', cells: ['', '', 'Yes', 'Yes'] },
+  { name: 'tailreach', cells: ['Yes¹', 'Yes', 'Yes', 'Yes', 'Yes', 'Yes'], us: true },
+  { name: 'macOS Screen Sharing', cells: ['No', 'No', 'Yes', 'No²', 'No', 'Yes'] },
+  { name: 'Chrome Remote Desktop', cells: ['Desktop only', 'No', '', 'Yes', 'No', 'Yes'] },
+  { name: 'RustDesk', cells: ['', '', '', 'Yes³', 'Yes', 'Yes'] },
+  { name: 'Jump Desktop', cells: ['No', '', '', 'Yes', 'No', 'No'] },
+  { name: 'Parsec', cells: ['', '', '', 'Yes', 'No', 'Yes⁴'] },
+];
+const notes = [
+  'Plus the Tailscale app, which puts that device on your tailnet.',
+  'Built in, and great on a local network; from outside it needs port forwarding or a VPN.',
+  'Uses RustDesk’s public relay servers by default, or one you host yourself.',
+  'Free for personal use; paid plans for teams.',
 ];
 ---
 
@@ -97,10 +106,10 @@ const rows = [
         <h2>Install on the Mac</h2>
         <pre><code><span class="p">$</span> brew install tanmaydoesai/tailreach/tailreach
 <span class="p">$</span> tailreach setup</code></pre>
-        <p class="sub">Setup ends with <code>tailreach doctor</code>, which tells you what's left: approve the Tailscale sign-in, pick a password, allow two permissions. Then open the link on any device on your tailnet. <a href="/docs/getting-started/">Full guide →</a></p>
+        <p class="sub">Setup walks you through the Tailscale sign-in and the two macOS permissions, then checks everything with <code>tailreach doctor</code>. Open the link it prints on any device on your tailnet. Later, <code>tailreach update</code> keeps it current. <a href="/docs/getting-started/">Full guide →</a></p>
       </section>
 
-      <section class="wrap narrow" id="compare">
+      <section class="wrap" id="compare">
         <h2>Why not something else?</h2>
         <p class="sub">They're good tools. tailreach is for when you want nothing but a browser on the other end, on your own private network.</p>
         <div class="table">
@@ -112,12 +121,13 @@ const rows = [
               {rows.map((r) => (
                 <tr class={r.us ? 'us' : ''}>
                   <th scope="row">{r.name}</th>
-                  {r.cells.map((c) => <td class={c === 'Yes' ? 'yes' : c ? 'no' : 'na'}>{c || '·'}</td>)}
+                  {r.cells.map((c) => <td class={c.startsWith('Yes') ? 'yes' : c ? 'no' : 'na'}>{c || '·'}</td>)}
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+        <ol class="notes">{notes.map((n) => <li>{n}</li>)}</ol>
         <p class="fine">A dot means we haven't checked. Spot a mistake? <a href={repo + '/issues'}>Open an issue</a>.</p>
       </section>
     </main>

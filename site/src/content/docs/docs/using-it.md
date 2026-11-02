@@ -26,13 +26,13 @@ Open tailreach on the laptop or tablet, tap the extended-display button and **St
 ## Locked, asleep, restarted
 
 - **Locked:** the viewer says so. Type your Mac password and it goes into the real lock screen (needs Screen Sharing on).
-- **Asleep:** turn on *Keep this Mac reachable* in `tailreach settings` (or the menu bar).
+- **Asleep:** turn on **Keep Mac Reachable** in the menu-bar icon (or `tailreach settings`).
 - **Restarted with FileVault:** someone has to type the password at the startup screen once. `sudo fdesetup authrestart` skips it for planned restarts.
 
 ## Files, clipboard, sound
 
 - **Files:** drop them on the screen. They land in the Mac's Downloads; nothing is ever replaced or read.
-- **Clipboard:** **Copy** and **Paste** in **⋯**, both ways. Password-manager secrets are never sent.
+- **Clipboard:** **Copy** and **Paste** in **⋯**, both ways, text only (not images or files). Password-manager secrets are never sent.
 - **Sound:** off by default; **⋯ → Sound** turns it on.
 
 ## Only one at a time

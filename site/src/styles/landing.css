@@ -90,17 +90,23 @@ pre code { font-size: inherit; }
 .p { color: var(--dim); user-select: none; }
 
 .table { overflow-x: auto; margin: 24px 0 12px; border: 1px solid var(--line); border-radius: 12px; }
-table { border-collapse: collapse; width: 100%; min-width: 560px; font-size: 14px; }
+table { border-collapse: collapse; width: 100%; min-width: 820px; font-size: 14px; }
 th, td { padding: 12px 14px; text-align: center; border-bottom: 1px solid var(--line); }
-thead th { font-weight: 500; color: var(--muted); font-size: 13px; vertical-align: bottom; }
+thead th { font-weight: 500; color: var(--muted); font-size: 13px; vertical-align: bottom; max-width: 130px; }
 tbody th { text-align: left; font-weight: 500; white-space: nowrap; }
 tbody tr:last-child th, tbody tr:last-child td { border-bottom: 0; }
+/* On a narrow screen the table scrolls sideways: keep the names in view. */
+tbody th, thead th:first-child { position: sticky; left: 0; background: var(--bg); z-index: 1; }
 tr.us { background: var(--bg-2); }
+tr.us th { background: var(--bg-2); }
 tr.us th { font-weight: 650; }
 td.yes { color: var(--accent); }
 td { white-space: nowrap; }
 td.no { color: var(--muted); }
 td.na { color: var(--dim); }
+.notes { color: var(--muted); font-size: 13px; margin: 0 0 10px; padding-left: 20px; }
+.notes li { margin: 2px 0; }
+.notes li::marker { color: var(--dim); }
 .fine { color: var(--dim); font-size: 13px; margin: 0; }
 
 footer { background: var(--bg-2); border-top: 1px solid var(--line); }

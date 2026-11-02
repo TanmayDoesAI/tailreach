@@ -8,7 +8,7 @@
 Control it from your phone on 5G, or turn a spare laptop, tablet or phone into a second monitor for it.
 Nothing to install on the device you're viewing from, no port forwarding, no relay server, no accounts besides your own tailnet.
 
-- **Remote control** from an iPhone, iPad, Android phone or any laptop's browser: touch gestures, trackpad mode, a full keyboard, clipboard both ways.
+- **Remote control** from an iPhone, iPad, Android phone or any laptop's browser: touch gestures, trackpad mode, a full keyboard, copy and paste of text both ways.
 - **Second screen:** any browser can become an extra display for the Mac. The Mac creates a real virtual monitor the size of that screen; drag windows onto it like a plugged-in one.
 - **Fast on bad networks:** hardware H.264 over WebRTC, with its own rate control built for mobile links that drop and come back. It cuts quickly, recovers in a couple of seconds and never builds up lag.
 - **Private by design:** traffic never leaves your tailnet. Every request is checked against your Tailscale identity, and there's a device password and passkeys on top.
@@ -37,7 +37,7 @@ tailreach is an independent project, not affiliated with Tailscale Inc.
 |---|---|
 | **Mac sharing its screen** | Full: hardware H.264 over WebRTC, touch and keyboard input, clipboard, extended display, lock-screen unlock |
 | **Windows or Linux sharing its screen** | Basic: point `--vnc` at a VNC server you run (TightVNC, TigerVNC…). No fast stream or extended display yet |
-| **Viewing / being the second screen** | Any modern browser: Safari on iPhone and iPad, Chrome on Android, Chrome, Edge, Firefox and Safari on Windows, Mac and Linux |
+| **Viewing / being the second screen** | Any modern browser: Safari on iPhone and iPad, Chrome on Android; Chrome, Edge or Firefox on Windows and Linux; Safari, Chrome, Edge or Firefox on a Mac |
 
 A native Windows host (fast stream and extended display) is on the roadmap.
 
@@ -45,7 +45,7 @@ A native Windows host (fast stream and extended display) is on the roadmap.
 
 You need:
 
-- a Mac with the Xcode Command Line Tools (`xcode-select --install`) and [Go](https://go.dev/dl/);
+- a Mac on macOS 14 (Sonoma) or newer, with the Xcode Command Line Tools (`xcode-select --install`) and [Go](https://go.dev/dl/);
 - a [Tailscale](https://tailscale.com) account, with **MagicDNS** and **HTTPS certificates** switched on in the admin console ([DNS settings](https://login.tailscale.com/admin/dns));
 - the Tailscale app on each device you'll view from (phone, tablet, laptop), signed in to the same account.
 
@@ -61,7 +61,7 @@ brew install tanmaydoesai/tailreach/tailreach
 tailreach setup
 ```
 
-When a new version is out, the dashboard and `tailreach doctor` say so. Run `tailreach setup` again after each `brew upgrade tailreach` (in a clone: `git pull && make setup`): Homebrew can't use your keychain while it builds, so `setup` is what signs the new copy and keeps macOS's permissions in place.
+When a new version is out, the dashboard and `tailreach doctor` say so. Update with `tailreach update` (in a clone: `git pull && make setup`). It upgrades with Homebrew, then runs `tailreach setup`, which signs the new copy so macOS keeps its permissions.
 
 There are no downloads: tailreach is built from source on your own Mac, and `make setup` (or `tailreach setup`) handles the rest. It builds tailreach, signs it with a local identity (so macOS remembers its permissions), and makes it start at login. It finishes with `tailreach doctor`, which checks everything and tells you what's left, with the exact fix for each:
 
