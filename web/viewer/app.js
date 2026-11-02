@@ -1281,13 +1281,15 @@ kbd.addEventListener('beforeinput', (e) => {
 // Some keyboard edits aren't cancelable: restore the sentinel after the native edit
 // too, without forwarding it a second time.
 kbd.addEventListener('input', resetKeyboardInput);
+// The extra keys row (and the room made for it) shows only once an on-screen keyboard has
+// actually come up: with a hardware keyboard (laptop, iPad keyboard) none does, and the
+// row would only shrink the screen. fitViewport() checks on every viewport resize.
+const SOFT_KBD_MIN = 120;   // px the visible area must lose to count as an on-screen keyboard
 kbd.addEventListener('focus', () => {
   resetKeyboardInput();
-  document.body.classList.add('kbd-open');
   fitViewport();
 });
 kbd.addEventListener('blur', () => {
-  document.body.classList.remove('kbd-open');
   fitViewport();
 });
 
@@ -1302,7 +1304,9 @@ function fitViewport() {
   const vv = window.visualViewport;
   const x = vv?.offsetLeft || 0, y = vv?.offsetTop || 0;
   const width = vv?.width || innerWidth, height = vv?.height || innerHeight;
-  document.documentElement.style.setProperty('--kb-offset', `${Math.max(0, innerHeight - height - y)}px`);
+  const kbOffset = Math.max(0, innerHeight - height - y);
+  document.documentElement.style.setProperty('--kb-offset', `${kbOffset}px`);
+  document.body.classList.toggle('kbd-open', document.activeElement === kbd && kbOffset >= SOFT_KBD_MIN);
   let left = x, top = y, right = x + width, bottom = y + height;
   const keys = $('#keys').getBoundingClientRect();
   if (keys.height) bottom = Math.min(bottom, keys.top - 6);
@@ -1593,7 +1597,10 @@ const actions = {
   busyNo: () => leaveBusy(false, false),
   extendPanel: () => openExtend(true),
   extendClose: () => openExtend(false),
-  extendGo: () => (extActive() ? stopExtend() : startExtend()),
+  // Already on, but shown elsewhere (another tab or device): the main button shows it here,
+  // and stopping it is the second button, so nobody turns it off by mistake.
+  extendGo: () => (!extActive() ? startExtend() : extShown() ? stopExtend() : showExtend()),
+  extendStop: () => stopExtend(),
   sendFile: () => $('#filePick').click(),
 };
 
@@ -1619,8 +1626,11 @@ function markExtend() {
   $('#extState').textContent = extBusy ? (on ? 'Changing…' : 'Starting…') : on ? 'On' : 'Off';
   $('#extend').classList.toggle('on', on);
   $('#extendBtn').classList.toggle('live', on);
-  $('#extGo').textContent = on ? 'Stop extended display' : 'Start extended display';
+  const elsewhere = on && !extShown();
+  $('#extGo').textContent = !on ? 'Start extended display' : elsewhere ? 'Show it on this screen' : 'Stop extended display';
   $('#extGo').disabled = extBusy;
+  $('#extStop').classList.toggle('hidden', !elsewhere);
+  $('#extStop').disabled = extBusy;
   $('#extNote').textContent = on
     ? 'It closes by itself 5 minutes after you leave this page.'
     : 'Only the screen is shared: no files and no commands.';
@@ -1652,6 +1662,14 @@ function sendExtend() {
 function startExtend() {
   $('#extErr').textContent = '';
   sendExtend();
+  document.documentElement.requestFullscreen?.().catch(() => {});   // needs this tap
+}
+
+function showExtend() {
+  const d = displays.find((x) => x.name === EXT_NAME);
+  if (!d) return;
+  chooseDisplay(d.id);
+  openExtend(false);
   document.documentElement.requestFullscreen?.().catch(() => {});   // needs this tap
 }
 
