@@ -25,6 +25,9 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "update":
+			exitOn(update(os.Args[2:]))
+			return
 		case "install":
 			exitOn(install(os.Args[2:]))
 			return

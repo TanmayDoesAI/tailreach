@@ -22,7 +22,7 @@ const (
 	releasesURL      = "https://api.github.com/repos/TanmayDoesAI/tailreach/releases/latest"
 	updateFirst      = time.Minute
 	updateEvery      = 24 * time.Hour
-	updateUpgradeHB  = "brew upgrade tailreach && tailreach setup"
+	updateUpgradeHB  = "tailreach update"
 	updateUpgradeGit = "git pull && make setup"
 )
 

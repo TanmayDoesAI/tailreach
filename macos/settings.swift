@@ -277,7 +277,7 @@ struct SettingsView: View {
                 if let up = control.state.update {
                     Text("tailreach \(up.version) is out.").bold()
                     if let link = URL(string: up.url) { Link("What's new", destination: link) }
-                    Text("Update: brew upgrade tailreach && tailreach setup (or git pull && make setup in a clone)")
+                    Text("Update: tailreach update (or git pull && make setup in a clone)")
                         .font(.callout.monospaced()).textSelection(.enabled)
                 }
                 Toggle("Check for new versions once a day", isOn: Binding(

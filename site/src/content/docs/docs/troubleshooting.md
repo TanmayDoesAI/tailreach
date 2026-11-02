@@ -14,7 +14,7 @@ Run `tailreach doctor` first. It checks every step and prints the exact fix. The
 | Taps do nothing ("Mac is blocking input") | Allow **Accessibility** for `tailreach`. |
 | `tailreach` isn't in a permission list | `tailreach doctor --ask` adds it. |
 | Can't unlock from the lock screen | Turn on **Screen Sharing** in System Settings → General → Sharing. |
-| Offline when the Mac sleeps | Turn on *Keep this Mac reachable*. |
-| Stopped working after `brew upgrade` | Run `tailreach setup` again. |
+| Offline when the Mac sleeps | Turn on **Keep Mac Reachable** in the menu-bar icon. |
+| Stopped working after `brew upgrade` | Run `tailreach setup` again (`tailreach update` does both). |
 
 Still stuck? Open the repo in a coding agent and say *"Fix my tailreach setup by following SETUP.md"*, or [open an issue](https://github.com/TanmayDoesAI/tailreach/issues/new/choose) with what `tailreach doctor` printed (take out your tailnet name and e-mail first).

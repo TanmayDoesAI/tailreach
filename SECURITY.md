@@ -14,7 +14,7 @@ the fix if you'd like it.
 
 ## Supported versions
 
-Fixes go into the latest release. Upgrade with `brew upgrade tailreach && tailreach setup`, or
+Fixes go into the latest release. Upgrade with `tailreach update`, or
 `git pull && make setup` in a clone.
 
 ## Scope

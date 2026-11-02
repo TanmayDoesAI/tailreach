@@ -239,7 +239,8 @@ Usage:
   tailreach --hub [flags]        also serve the dashboard at https://devices.<tailnet>.ts.net/
   tailreach setup [flags]        set up an installed copy (Homebrew): sign it, login item, doctor
   tailreach install [flags]      start automatically at login (macOS), same flags as above
-  tailreach uninstall            stop and remove the login item
+  tailreach update               upgrade with Homebrew, then setup (keeps the permissions)
+  tailreach uninstall [--all]    stop it and remove the login item (--all: its data too)
   tailreach settings             open the settings window on this Mac (password, trusted devices, sessions)
   tailreach password             set or reset the device password from a terminal (--off turns it off)
   tailreach invite LOGIN         let someone else in for a while (--hours N, --view-only; --list, --remove LOGIN)

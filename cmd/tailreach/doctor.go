@@ -109,7 +109,7 @@ func doctor(args []string) error {
 	if up, ok := st["update"].(map[string]any); ok {
 		how := "`git pull && make setup` in your clone"
 		if me == "tailreach" {
-			how = "`brew upgrade tailreach && tailreach setup`"
+			how = "`tailreach update`"
 		}
 		d.warn(fmt.Sprintf("tailreach %v is out (this is %v): %v", up["version"], st["version"], up["url"]), how)
 	}
