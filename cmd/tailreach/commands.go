@@ -34,6 +34,10 @@ func passwordCmd(args []string) error {
 	state := fs.String("state", server.DefaultStateDir(), "state directory of the running tailreach")
 	off := fs.Bool("off", false, "turn the password off")
 	fs.Parse(args)
+	// Behind a hub there's no password of its own to set: say so before asking for one.
+	if st, err := controlCall(*state, map[string]any{"op": "status"}); err == nil && st["mode"] == "behindHub" {
+		return fmt.Errorf("this Mac is reached through your hub (%v), so the password is set there: run `tailreach password` on the hub. Signing in on the hub opens every Mac behind it", st["hub"])
+	}
 	req := map[string]any{"op": "enablePassword", "enabled": false}
 	if !*off {
 		fmt.Print("New device password (8+ characters): ")

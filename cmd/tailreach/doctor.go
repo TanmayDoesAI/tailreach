@@ -114,6 +114,14 @@ func doctor(args []string) error {
 	case n > 0:
 		d.ok("%d other device(s) of yours on the tailnet", int(n))
 	}
+	switch st["mode"] {
+	case "hub":
+		d.ok("Hub: serves the dashboard, and its password and passkeys sign you in to every Mac behind it")
+	case "behindHub":
+		d.ok("Behind the hub %q: reached only through it, with the hub's password (set it on the hub)", fmt.Sprint(st["hub"]))
+	case "standalone":
+		d.ok("On its own: its own address, password and passkeys")
+	}
 	if b, _ := st["managesLogin"].(bool); b {
 		if set, _ := st["passwordSet"].(bool); set {
 			d.ok("Device password set")

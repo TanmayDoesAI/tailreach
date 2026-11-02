@@ -564,8 +564,10 @@ func (a *app) viewerName(r *http.Request) string {
 		return v
 	}
 	name := "unknown device"
-	if wi, err := a.lc.WhoIs(r.Context(), r.RemoteAddr); err == nil && wi.Node != nil {
-		name = wi.Node.ComputedName
+	if a.lc != nil { // nil only in tests
+		if wi, err := a.lc.WhoIs(r.Context(), r.RemoteAddr); err == nil && wi.Node != nil {
+			name = wi.Node.ComputedName
+		}
 	}
 	if g := guestOf(r); g != nil {
 		return "guest " + g.Login + " (" + name + ")"

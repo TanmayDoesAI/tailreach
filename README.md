@@ -187,6 +187,8 @@ Every request has to pass all of these layers:
    - With no device password set, adding a passkey needs a 6-digit code shown on the Mac.
    - Sessions are HttpOnly, Secure, SameSite=Strict cookies. They expire after 12 h, or after 1 h idle.
 5. **Hub pinning.** Devices behind a hub only accept connections from that one hub. The hub's node ID is pinned the first time it connects.
+   - The hub pins each device's node the same way, and only ever forwards to that machine.
+   - The hub shows its own copy of the viewer for every device and forwards only the screen's live connections, without your cookies. A device can't set cookies or run its own page on the hub's address.
 6. **Origin checks.** Only pages from your tailnet can open screen sockets, and sign-in requests must come from the hub's own origin.
 7. **You see every session.** A **"Screen shared" panel** sits at the top right of the Mac while someone is connected. It shows who and for how long, and has a **Stop** button. The panel is left out of the stream.
    - macOS also shows its screen-recording indicator, and notifications cover new passkeys and trusted devices.
@@ -220,11 +222,7 @@ Run `tailreach doctor` (`./tailreach doctor` in a clone). It checks every step a
 
 - **Mac only, for the fast stream and the extended display.** Windows and Linux hosts work through VNC for now.
 - **Sound is one-way and WebRTC-only:** no microphone from the phone to the Mac, and no sound on the WebSocket fallback.
-- **Multi-computer setups behind a hub are less isolated than a single Mac:**
-  - The hub forwards the browser's cookies to the devices behind it.
-  - A device's own password isn't enforced when you reach it through the hub.
-
-  If you share more than one computer, treat everyone on your tailnet who can reach the hub as able to reach them all.
+- **Behind a hub, one sign-in opens every Mac.** That's the design (one hub-wide password): if a Mac needs a sign-in of its own, run it on its own with `--via ""`.
 - The extended display depends on a private macOS API (see above).
 
 ## Hack on it

@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"mime"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -45,8 +46,11 @@ type app struct {
 	hubMu sync.Mutex
 	hubID string // pinned StableID of the hub (devices behind a hub)
 
-	mu      sync.RWMutex
-	devices map[string]*device // hub only, keyed by device name
+	mu        sync.RWMutex
+	devices   map[string]*device // hub only, keyed by device name
+	nodePins  map[string]string  // hub only: device name → the Tailscale node it was first seen on
+	pinWarned map[string]bool
+	nodeAt    func(ctx context.Context, ip string) string // tests stand in for Tailscale WhoIs
 
 	vncMu    sync.Mutex
 	vncAt    time.Time
@@ -63,6 +67,7 @@ type device struct {
 	Local    bool      `json:"local"`  // this is the hub machine itself
 	LastSeen time.Time `json:"lastSeen"`
 	IP       string    `json:"-"`
+	Node     string    `json:"-"` // its Tailscale StableNodeID (pinned, see pinNode)
 }
 
 // info is what every node reports at /.well-known/tailreach.json.
@@ -88,6 +93,7 @@ func (a *app) handler() http.Handler {
 	mux.Handle("GET /manifest.webmanifest", static)
 
 	viewer := a.viewer()
+	viewerFiles := a.viewerFiles() // the hub's own copy, also for the devices behind it
 	if a.opt.hub {
 		mux.HandleFunc("GET /{$}", a.serveFile("dashboard/index.html"))
 		mux.HandleFunc("GET /api/devices", a.serveDevices)
@@ -101,7 +107,7 @@ func (a *app) handler() http.Handler {
 				http.NotFound(w, r)
 				return
 			}
-			a.proxyToDevice(w, r, name)
+			a.serveDevice(w, r, name, viewerFiles)
 		})
 		mux.HandleFunc("GET /{name}", func(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/"+r.PathValue("name")+"/", http.StatusFound)
@@ -182,8 +188,7 @@ func (a *app) plainHandler() http.Handler {
 
 // viewer serves the remote-screen page and its WebSocket.
 func (a *app) viewer() http.Handler {
-	sub, _ := fs.Sub(a.web, "viewer")
-	files := http.FileServer(http.FS(sub))
+	files := a.viewerFiles()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/websockify":
@@ -211,10 +216,23 @@ func (a *app) viewer() http.Handler {
 			writeJSON(w, map[string]any{"name": a.opt.name, "fast": a.fastAvailable(), "vnc": a.vncUp(), "user": consoleUser()})
 			return
 		}
+		files.ServeHTTP(w, r)
+	})
+}
+
+// viewerFiles serves the viewer's static files (page, scripts, styles, noVNC).
+func (a *app) viewerFiles() http.Handler {
+	sub, _ := fs.Sub(a.web, "viewer")
+	files := http.FileServer(http.FS(sub))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-cache")
 		files.ServeHTTP(w, r)
 	})
 }
+
+// deviceEndpoints are the viewer's only dynamic paths (relative to /<name>): the hub
+// forwards just these to a device behind it and serves everything else itself.
+var deviceEndpoints = map[string]bool{"/stream": true, "/websockify": true, "/caps": true, "/upload": true}
 
 func (a *app) serveFile(name string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -420,6 +438,10 @@ func (a *app) discover(ctx context.Context) {
 	client := a.srv.HTTPClient()
 	client.Timeout = 3 * time.Second
 
+	peers := map[string]bool{} // every node still on the tailnet
+	for _, p := range st.Peer {
+		peers[string(p.ID)] = true
+	}
 	seen := map[string]bool{}
 	var wg sync.WaitGroup
 	var mu sync.Mutex
@@ -429,6 +451,7 @@ func (a *app) discover(ctx context.Context) {
 		}
 		ip := p.TailscaleIPs[0].String()
 		host := strings.TrimSuffix(p.DNSName, ".")
+		node := string(p.ID)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -446,12 +469,17 @@ func (a *app) discover(ctx context.Context) {
 			if name == "" {
 				return
 			}
-			mu.Lock()
-			seen[name] = true
-			mu.Unlock()
 			a.mu.Lock()
-			a.devices[name] = &device{Name: name, Host: host, OS: in.OS, Online: true, Screen: in.Screen, LastSeen: time.Now(), IP: ip}
+			ok := a.pinNode(name, node, host, peers)
+			if ok {
+				a.devices[name] = &device{Name: name, Host: host, OS: in.OS, Online: true, Screen: in.Screen, LastSeen: time.Now(), IP: ip, Node: node}
+			}
 			a.mu.Unlock()
+			if ok {
+				mu.Lock()
+				seen[name] = true
+				mu.Unlock()
+			}
 		}()
 	}
 	wg.Wait()
@@ -464,6 +492,57 @@ func (a *app) discover(ctx context.Context) {
 	}
 	a.mu.Unlock()
 	a.saveKnown()
+}
+
+// pinNode ties a device name to the Tailscale node it was first found on, so another of
+// the owner's machines can't later answer as "mac2" and be sent mac2's viewers. The pin
+// moves only once the pinned machine is gone from the tailnet (removed in the admin
+// console). Called with a.mu held; reports whether node may be this device.
+func (a *app) pinNode(name, node, host string, peers map[string]bool) bool {
+	if node == "" {
+		return false
+	}
+	pinned := a.nodePins[name]
+	if pinned == node {
+		return true
+	}
+	if pinned != "" && peers[pinned] {
+		if !a.pinWarned[name+" "+node] {
+			a.pinWarned[name+" "+node] = true
+			log.Printf("✗ %s says it is %q, but that name belongs to another machine on your tailnet: not listing it. If you reinstalled %s, remove the old machine at https://login.tailscale.com/admin/machines (or delete its line in %s).", host, name, name, a.pinsPath())
+		}
+		return false
+	}
+	if pinned != "" {
+		log.Printf("ℹ %s is now %s (the machine it was on before is gone from the tailnet)", name, host)
+	}
+	a.nodePins[name] = node
+	if a.opt.stateDir != "" {
+		b, _ := json.MarshalIndent(a.nodePins, "", "  ")
+		os.WriteFile(a.pinsPath(), b, 0o600)
+	}
+	return true
+}
+
+func (a *app) pinsPath() string { return filepath.Join(a.opt.stateDir, "device-nodes.json") }
+
+func (a *app) loadPins() {
+	a.nodePins, a.pinWarned = map[string]string{}, map[string]bool{}
+	if b, err := os.ReadFile(a.pinsPath()); err == nil {
+		json.Unmarshal(b, &a.nodePins)
+	}
+}
+
+// nodeAtIP is the Tailscale node (StableNodeID) that holds this tailnet IP right now.
+func (a *app) nodeAtIP(ctx context.Context, ip string) string {
+	if a.nodeAt != nil {
+		return a.nodeAt(ctx, ip)
+	}
+	who, err := a.lc.WhoIs(ctx, net.JoinHostPort(ip, "80"))
+	if err != nil || who.Node == nil {
+		return ""
+	}
+	return string(who.Node.StableID)
 }
 
 // Known devices are remembered so the dashboard can list them while they're offline.
@@ -496,20 +575,24 @@ func (a *app) saveKnown() {
 	os.WriteFile(a.knownPath(), b, 0o600)
 }
 
-// ---------- hub: forwarding /<name>/ to that device ----------
+// ---------- hub: /<name>/ for a device behind it ----------
+//
+// The hub serves the viewer itself, from its own copy, and forwards only the dynamic
+// endpoints (deviceEndpoints) to the device, over the tailnet, to the node pinned for that
+// name. The browser's cookies (the hub's session and trust) never leave the hub, and
+// nothing a device sends can set a cookie or run as a page under the hub's address.
 
-func (a *app) proxyToDevice(w http.ResponseWriter, r *http.Request, name string) {
-	viewer := a.viewerName(r)
+func (a *app) serveDevice(w http.ResponseWriter, r *http.Request, name string, files http.Handler) {
 	a.mu.RLock()
 	d := a.devices[name]
-	var ip string
+	var ip, node string
 	online := false
 	if d != nil {
-		ip, online = d.IP, d.Online
+		ip, node, online = d.IP, d.Node, d.Online
 	}
 	a.mu.RUnlock()
 
-	if d == nil || !online || ip == "" {
+	if d == nil || !online || ip == "" || node == "" {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusServiceUnavailable)
 		state := "isn't known to this hub"
@@ -519,21 +602,65 @@ func (a *app) proxyToDevice(w http.ResponseWriter, r *http.Request, name string)
 		fmt.Fprintf(w, `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font:16px system-ui;background:#0b0d12;color:#e9ecf2;padding:40px"><h2>%s %s</h2><p><a style="color:#4f8cff" href="/">← All devices</a></p>`, html.EscapeString(name), state)
 		return
 	}
+	if !deviceEndpoints[strings.TrimPrefix(r.URL.Path, "/"+name)] {
+		http.StripPrefix("/"+name, files).ServeHTTP(w, r)
+		return
+	}
+	// The address could have moved to another machine since discovery: only the pinned one.
+	if got := a.nodeAtIP(r.Context(), ip); got != node {
+		log.Printf("✗ not forwarding to %s: %s isn't the machine pinned for it", name, ip)
+		http.Error(w, name+" isn't the machine this hub knows by that name", http.StatusBadGateway)
+		return
+	}
+	var transport http.RoundTripper
+	if a.srv != nil {
+		transport = a.srv.HTTPClient().Transport
+	}
+	deviceProxy(name, ip, a.viewerName(r), transport).ServeHTTP(w, r)
+}
 
-	rp := &httputil.ReverseProxy{
+// deviceProxy forwards one request to a device behind the hub (host = its tailnet IP).
+func deviceProxy(name, host, viewer string, transport http.RoundTripper) *httputil.ReverseProxy {
+	return &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
-			pr.SetURL(&url.URL{Scheme: "http", Host: ip})
-			pr.Out.Host = ip
+			pr.SetURL(&url.URL{Scheme: "http", Host: host})
+			pr.Out.Host = host
+			stripProxyRequest(pr.Out.Header)
 			pr.Out.Header.Set("X-Tailreach-Hub", "1")
 			pr.Out.Header.Set("X-Tailreach-Viewer", viewer)
 		},
-		Transport:     a.srv.HTTPClient().Transport,
-		FlushInterval: -1,
+		ModifyResponse: stripProxyResponse,
+		Transport:      transport,
+		FlushInterval:  -1,
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			http.Error(w, name+" didn't answer: "+err.Error(), http.StatusBadGateway)
 		},
 	}
-	rp.ServeHTTP(w, r)
+}
+
+// stripProxyRequest drops the browser's credentials for the hub: a device behind it trusts
+// the hub's node (fromHub), never cookies, and must never see them.
+func stripProxyRequest(h http.Header) {
+	h.Del("Cookie")
+	h.Del("Authorization")
+	h.Del("Proxy-Authorization")
+}
+
+// stripProxyResponse keeps a device from setting cookies on the hub's address, and from
+// having anything it returns treated as a page there (a sandboxed, plain-text answer).
+func stripProxyResponse(resp *http.Response) error {
+	h := resp.Header
+	h.Del("Set-Cookie")
+	h.Del("Set-Cookie2")
+	if resp.StatusCode == http.StatusSwitchingProtocols {
+		return nil
+	}
+	if mt, _, _ := mime.ParseMediaType(h.Get("Content-Type")); mt != "application/json" && mt != "text/plain" {
+		h.Set("Content-Type", "text/plain; charset=utf-8")
+	}
+	h.Set("Content-Security-Policy", "sandbox; default-src 'none'")
+	h.Set("X-Content-Type-Options", "nosniff")
+	return nil
 }
 
 // consoleUser is the macOS account name, used to unlock the lock screen over Screen Sharing.

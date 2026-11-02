@@ -175,6 +175,7 @@ func run(o options) error {
 	}
 
 	if o.hub {
+		a.loadPins()
 		a.loadKnown()
 		go a.discoverLoop(ctx)
 	}

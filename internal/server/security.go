@@ -340,6 +340,10 @@ func (a *app) handleControl(c net.Conn) {
 func (a *app) control(req map[string]any) map[string]any {
 	op, _ := req["op"].(string)
 	s := a.sec
+	if (op == "setPassword" || op == "enablePassword") && a.auth2 == nil {
+		// Behind a hub, signing in happens on the hub, once for every Mac behind it.
+		return map[string]any{"error": "This Mac is reached through your hub (" + a.opt.via + "), so the password is set there: run `tailreach password` (or `tailreach settings`) on the hub. Signing in on the hub opens every Mac behind it."}
+	}
 	switch op {
 	case "status":
 		// handled below
@@ -536,6 +540,10 @@ func (a *app) control(req map[string]any) map[string]any {
 	st["url"] = "https://" + a.selfDNS + "/"
 	st["owner"] = a.owner
 	st["managesLogin"] = a.auth2 != nil
+	st["mode"] = a.mode()
+	if a.auth2 == nil {
+		st["hub"] = a.opt.via
+	}
 	st["https"] = a.https
 	st["screenSharing"] = a.vncUp()
 	st["name"] = a.opt.name
@@ -547,6 +555,19 @@ func (a *app) control(req map[string]any) map[string]any {
 		st["invites"] = a.invites.active()
 	}
 	return st
+}
+
+// mode is how this Mac is reached: "hub" (it serves the dashboard and the sign-in for
+// every Mac behind it), "behindHub" (only through its hub, which signs viewers in), or
+// "standalone" (on its own, with its own sign-in).
+func (a *app) mode() string {
+	switch {
+	case a.opt.hub:
+		return "hub"
+	case a.auth2 == nil:
+		return "behindHub"
+	}
+	return "standalone"
 }
 
 // ownDevices counts the owner's other devices on the tailnet (a phone, a laptop: what
