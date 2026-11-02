@@ -19,9 +19,11 @@
 import AppKit
 import ApplicationServices
 import AVFoundation
+import Carbon
 import SwiftUI
 import CoreMedia
 import Foundation
+import IOKit
 import ScreenCaptureKit
 import VideoToolbox
 
@@ -534,6 +536,7 @@ final class Input {
     let src = CGEventSource(stateID: .hidSystemState)
     var down = [false, false, false]
     var held = Set<CGKeyCode>() // keys pressed but not yet released
+    var layout: KeyLayout? // the Mac's current keyboard layout, set from the main thread
 
     var bounds: CGRect { CGDisplayBounds(shownDisplay) }
     var pos: CGPoint { CGEvent(source: nil)?.location ?? .zero }
@@ -578,7 +581,7 @@ final class Input {
     /// Lets go of any button or key still held (a viewer that left mid-drag or mid-press).
     func releaseAll() {
         for b in 0..<3 where down[b] { button(b, down: false, clicks: 1, mods: []) }
-        for k in held { CGEvent(keyboardEventSource: src, virtualKey: k, keyDown: false)?.post(tap: .cghidEventTap) }
+        for k in held { post(k, down: false, flags: []) }
         held.removeAll()
     }
 
@@ -606,26 +609,78 @@ final class Input {
         var flags = mods
         var code: CGKeyCode
         var text: [UInt16]?
+        if held.contains(Input.fnKey) { flags.insert(.maskSecondaryFn) } // 🌐 held from the viewer
+        if name == "capslock" {
+            // A lock, not a held key: one toggle per press, so it can never be left stuck down.
+            if down != false { toggleCapsLock() }
+            return
+        }
         if let c = Input.named[name] {
             code = c
             if Input.arrows.contains(name) { flags.formUnion([.maskNumericPad, .maskSecondaryFn]) }
-        } else if name.count == 1, let (c, shift) = Input.keyFor(Character(name)) {
+            if Input.keypad.contains(c) { flags.insert(.maskNumericPad) }
+        } else if name.count == 1, flags.isDisjoint(with: [.maskCommand, .maskControl, .maskAlternate]),
+                  let (c, shift) = Input.keyFor(Character(name)) {
             code = c
             if shift { flags.insert(.maskShift) }
             // A plain character keeps its text, so another layout on the Mac still types it.
-            if flags.isDisjoint(with: [.maskCommand, .maskControl, .maskAlternate]) { text = Array(name.utf16) }
+            text = Array(name.utf16)
+        } else if name.count == 1, let (c, shift) = chordKey(Character(name), cmd: flags.contains(.maskCommand)) {
+            // A shortcut has no text to carry, and macOS reads its key through the Mac's own
+            // layout: press the key that makes this character there (⌘A on AZERTY isn't US "a").
+            code = c
+            if shift { flags.insert(.maskShift) }
         } else {
             if down != false { type(name) }
             return
         }
-        for d in down.map({ [$0] }) ?? [true, false] {
-            let e = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: d)
-            e?.flags = flags
-            if let text { e?.keyboardSetUnicodeString(stringLength: text.count, unicodeString: text) }
-            if rep { e?.setIntegerValueField(.keyboardEventAutorepeat, value: 1) }
-            e?.post(tap: .cghidEventTap)
-        }
+        for d in down.map({ [$0] }) ?? [true, false] { post(code, down: d, flags: flags, text: text, rep: rep) }
         if let down { if down { held.insert(code) } else { held.remove(code) } }
+    }
+
+    /// The key for a character in a shortcut: on the Mac's current layout if it has it
+    /// (⌘ shortcuts read the layout's ⌘ level, as macOS does), else the US key.
+    func chordKey(_ ch: Character, cmd: Bool) -> (CGKeyCode, Bool)? {
+        if let l = layout, let k = (cmd ? l.cmd[ch] : nil) ?? l.plain[ch] {
+            // Digits that need Shift (AZERTY): ⌘1 there is ⌘ and the unshifted number-row key.
+            if k.1, ch.isASCII, ch.isNumber { return Input.keyFor(ch) }
+            return k
+        }
+        return Input.keyFor(ch)
+    }
+
+    /// Posts one key event. Fn (🌐) is a modifier, so it goes as flagsChanged, the way the
+    /// real key does; that's what lets a single press open the emoji picker or switch input.
+    func post(_ code: CGKeyCode, down: Bool, flags: CGEventFlags, text: [UInt16]? = nil, rep: Bool = false) {
+        guard let e = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: down) else { return }
+        if code == Input.fnKey {
+            e.type = .flagsChanged
+            e.flags = down ? flags.union(.maskSecondaryFn) : flags.subtracting(.maskSecondaryFn)
+        } else {
+            e.flags = flags
+        }
+        if let text { e.keyboardSetUnicodeString(stringLength: text.count, unicodeString: text) }
+        if rep { e.setIntegerValueField(.keyboardEventAutorepeat, value: 1) }
+        e.post(tap: .cghidEventTap)
+    }
+
+    /// Flips Caps Lock. A posted Caps Lock key doesn't change the lock itself, so set it on
+    /// the HID system (which then tells apps); only if that's unavailable, post flagsChanged.
+    func toggleCapsLock() {
+        let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching(kIOHIDSystemClass))
+        defer { IOObjectRelease(service) }
+        var connect: io_connect_t = 0
+        if service != 0, IOServiceOpen(service, mach_task_self_, UInt32(kIOHIDParamConnectType), &connect) == KERN_SUCCESS {
+            defer { IOServiceClose(connect) }
+            var on = false
+            if IOHIDGetModifierLockState(connect, Int32(kIOHIDCapsLockState), &on) == KERN_SUCCESS,
+               IOHIDSetModifierLockState(connect, Int32(kIOHIDCapsLockState), !on) == KERN_SUCCESS { return }
+        }
+        let on = CGEventSource.flagsState(.hidSystemState).contains(.maskAlphaShift)
+        guard let e = CGEvent(keyboardEventSource: src, virtualKey: 57, keyDown: !on) else { return }
+        e.type = .flagsChanged
+        e.flags = on ? [] : .maskAlphaShift
+        e.post(tap: .cghidEventTap)
     }
 
     /// Types text. A character on a US key goes as that real key press (with Shift if it
@@ -680,7 +735,13 @@ final class Input {
         "home": 115, "end": 119, "pageup": 116, "pagedown": 121,
         "f1": 122, "f2": 120, "f3": 99, "f4": 118, "f5": 96, "f6": 97, "f7": 98, "f8": 100,
         "f9": 101, "f10": 109, "f11": 103, "f12": 111,
+        "f13": 105, "f14": 107, "f15": 113, "f16": 106, "f17": 64, "f18": 79, "f19": 80,
+        "help": 114, "fn": fnKey,
+        "kp0": 82, "kp1": 83, "kp2": 84, "kp3": 85, "kp4": 86, "kp5": 87, "kp6": 88, "kp7": 89, "kp8": 91, "kp9": 92,
+        "kp.": 65, "kp*": 67, "kp+": 69, "kpclear": 71, "kp/": 75, "kpenter": 76, "kp-": 78, "kp=": 81,
     ]
+    static let fnKey: CGKeyCode = 63 // kVK_Function, the 🌐 key
+    static let keypad: Set<CGKeyCode> = [65, 67, 69, 71, 75, 76, 78, 81, 82, 83, 84, 85, 86, 87, 88, 89, 91, 92]
     static let chars: [Character: CGKeyCode] = [
         "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8, "v": 9, "b": 11,
         "q": 12, "w": 13, "e": 14, "r": 15, "y": 16, "t": 17, "1": 18, "2": 19, "3": 20, "4": 21,
@@ -701,6 +762,51 @@ final class Input {
         if let b = shifted[ch], let c = chars[b] { return (c, true) }
         return nil
     }
+}
+
+/// The Mac's current keyboard layout, read backwards: which key (and whether Shift) makes
+/// each character. Shortcuts use it so ⌘A is "a" on AZERTY or QWERTZ too.
+struct KeyLayout {
+    var plain: [Character: (CGKeyCode, Bool)] = [:] // no modifier, then Shift
+    var cmd: [Character: (CGKeyCode, Bool)] = [:]   // with ⌘ (some layouts, e.g. Dvorak-QWERTY ⌘, differ)
+
+    /// Reads the current layout. Text Input Sources must be used on the main thread.
+    /// nil when the layout has no key data (then shortcuts use the US keys).
+    static func current() -> KeyLayout? {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let src = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue(),
+              let ptr = TISGetInputSourceProperty(src, kTISPropertyUnicodeKeyLayoutData) else { return nil }
+        let data = Unmanaged<CFData>.fromOpaque(ptr).takeUnretainedValue()
+        guard let bytes = CFDataGetBytePtr(data) else { return nil }
+        let kb = UnsafeRawPointer(bytes).assumingMemoryBound(to: UCKeyboardLayout.self)
+        let kbType = UInt32(LMGetKbdType())
+        func read(_ mods: UInt32, into map: inout [Character: (CGKeyCode, Bool)], shift: Bool) {
+            for code in 0..<CGKeyCode(128) where !Input.keypad.contains(code) {
+                var dead: UInt32 = 0, len = 0
+                var buf = [UniChar](repeating: 0, count: 4)
+                let st = UCKeyTranslate(kb, code, UInt16(kUCKeyActionDown), (mods >> 8) & 0xFF, kbType,
+                                        OptionBits(1 << kUCKeyTranslateNoDeadKeysBit), &dead, buf.count, &len, &buf)
+                guard st == noErr, len > 0 else { continue }
+                let s = String(utf16CodeUnits: buf, count: len)
+                guard s.count == 1, let ch = s.first,
+                      !ch.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7f }) else { continue }
+                if map[ch] == nil { map[ch] = (code, shift) } // the first key wins, unshifted before Shift
+            }
+        }
+        var l = KeyLayout()
+        read(0, into: &l.plain, shift: false)
+        read(UInt32(shiftKey), into: &l.plain, shift: true)
+        read(UInt32(cmdKey), into: &l.cmd, shift: false)
+        read(UInt32(cmdKey | shiftKey), into: &l.cmd, shift: true)
+        return l
+    }
+}
+
+/// Re-reads the layout for the input thread. Called at start, when a viewer starts, and
+/// whenever the Mac's input source changes.
+func refreshKeyLayout() {
+    let l = KeyLayout.current()
+    inputQ.async { input.layout = l }
 }
 
 // MARK: - Commands
@@ -739,6 +845,7 @@ func handle(_ c: [String: Any]) {
             await MainActor.run {
                 viewing = true
                 lockWatcher.reset()
+                refreshKeyLayout()
                 cursorWatcher.reset()
                 panel.show(viewer: viewer, guest: guest, viewOnly: viewOnly) // shown before capture starts, so it can be left out of it
                 sendDisplays()
@@ -943,6 +1050,12 @@ let panel = SharePanel {
 NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { _ in
     if viewing { sendDisplays() }
 }
+// Switching keyboard layout on the Mac: re-read it for shortcuts. Delivered right away, as
+// this background app is never "active" (a plain observer would be held back until it is).
+refreshKeyLayout()
+CFNotificationCenterAddObserver(CFNotificationCenterGetDistributedCenter(), nil, { _, _, _, _, _ in
+    DispatchQueue.main.async { refreshKeyLayout() }
+}, kTISNotifySelectedKeyboardInputSourceChanged, nil, .deliverImmediately)
 // Warm up ScreenCaptureKit while idle, so the first frame comes quickly. (No capture yet.)
 Task { _ = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) }
 
