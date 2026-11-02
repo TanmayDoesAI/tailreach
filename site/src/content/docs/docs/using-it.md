@@ -19,6 +19,7 @@ Drag the toolbar by its grip to move it; tap the status pill to hide it.
 Open tailreach on the laptop or tablet, tap the extended-display button and **Start**. The Mac gets a real extra display the size of that screen: drag windows onto it like a plugged-in monitor.
 
 - It's always an extra screen; your Mac's own display stays main.
+- On a Retina screen (an iPad, a Retina laptop) it asks for a Retina display: the same size in points, twice the pixels, so text is sharp and normal-sized. macOS picks the mode a new display starts in; if it picks 1x, the panel shows no "Retina", and you get the 1x display of the same pixels. On a 1x screen it's 1x.
 - 30 Hz by default (light on the Mac), 60 Hz if you want.
 - **Exit** closes it. If the connection drops, it waits 5 minutes for you to come back.
 - It uses a private macOS API, so a macOS update could break it.

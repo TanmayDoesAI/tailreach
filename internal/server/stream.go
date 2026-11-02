@@ -440,12 +440,17 @@ func (a *app) relayStream(w http.ResponseWriter, r *http.Request) {
 		case t == "vstats": // the phone's own receive stats, only while recording (vrec.go)
 			writeViewerRec("phone", c)
 		case t == "extend": // make a virtual second display sized to this browser (vdisplay.go)
-			w, _ := c["w"].(float64)
-			h, _ := c["h"].(float64)
-			hz, _ := c["hz"].(float64)
+			// cw x ch (CSS pixels) and dpr pick the size and Retina; w x h (pixels) is an older viewer's ask.
+			num := func(k string) float64 { v, _ := c[k].(float64); return v }
+			size := extSizeFor(num("w"), num("h"), num("cw"), num("ch"), num("dpr"))
+			hz := num("hz")
 			go func() {
-				id, err := extendDisplay(uint32(max(w, 0)), uint32(max(h, 0)), hz)
-				ev := map[string]any{"t": "extended", "id": id}
+				id, retina, err := extendDisplay(size, hz)
+				// The size the desktop measures (points), for the panel.
+				ev := map[string]any{"t": "extended", "id": id, "retina": retina, "w": size.w, "h": size.h}
+				if retina {
+					ev["w"], ev["h"] = size.w/2, size.h/2
+				}
 				if err != nil {
 					log.Printf("extend: %v", err)
 					ev = map[string]any{"t": "extended", "error": err.Error()}

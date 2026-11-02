@@ -715,7 +715,8 @@ function onEvent(ev) {
       if (ev.error) { $('#extErr').textContent = ev.error; markExtend(); break; }
       // The Mac announces the new display a moment later: switch to it when it shows up in
       // the list (or after 2 s regardless). 0 means it was removed.
-      if (!ev.id) { chooseDisplay(0); if (ev.note) flash(ev.note); break; }
+      if (!ev.id) { extGot = null; chooseDisplay(0); if (ev.note) flash(ev.note); break; }
+      extGot = ev.w ? { w: ev.w, h: ev.h, retina: !!ev.retina } : null;
       // Same display, new frame rate: restart the stream only, and leave the panel open.
       if (ev.id === shownDisplay) { markExtend(); sendStart(); break; }
       pendingExt = ev.id;
@@ -1773,17 +1774,22 @@ const extActive = () => displays.some((d) => d.name === EXT_NAME);
 const extShown = () => displays.some((d) => d.name === EXT_NAME && d.id === shownDisplay);
 let extBusy = false;
 
+// From a 1.5x screen up the Mac makes it Retina: this screen's size in points, twice the
+// pixels, so text is sharp and normal-sized. Below that, 1x at this screen's pixels. The
+// Mac decides and bounds it (vdisplay.go extSizeFor); this mirrors it for the panel.
 function extSpec() {
-  return {
-    w: Math.round(screen.width * devicePixelRatio),
-    h: Math.round(screen.height * devicePixelRatio),
-    hz: settings.extHz,
-  };
+  const dpr = devicePixelRatio || 1, cw = screen.width, ch = screen.height;
+  const retina = dpr >= 1.5;
+  const f = retina ? Math.min(1, 1920 / cw, 1200 / ch) : dpr;
+  return { cw, ch, dpr, retina, w: Math.round(cw * f) & ~1, h: Math.round(ch * f) & ~1, hz: settings.extHz };
 }
+let extGot = null;   // what the Mac last opened for this viewer: { w, h, retina }
 
 function markExtend() {
   const on = extActive(), s = extSpec();
-  $('#extSpec').textContent = `${s.w} × ${s.h} · ${s.hz} Hz`;
+  // Once it's open, what it really is: macOS can start a Retina ask at 1x.
+  const g = on && extGot ? extGot : s;
+  $('#extSpec').textContent = `${g.w} × ${g.h}${g.retina ? ' · Retina' : ''} · ${s.hz} Hz`;
   $('#extState').textContent = extBusy ? (on ? 'Changing…' : 'Starting…') : on ? 'On' : 'Off';
   $('#extend').classList.toggle('on', on);
   $('#extendBtn').classList.toggle('live', on);
@@ -1817,7 +1823,8 @@ function sendExtend() {
   const s = extSpec();
   extBusy = true;
   markExtend();
-  send({ t: 'extend', w: s.w, h: s.h, hz: s.hz });
+  // w x h (1x pixels) for a Mac on an older tailreach, which ignores cw, ch and dpr.
+  send({ t: 'extend', cw: s.cw, ch: s.ch, dpr: s.dpr, w: Math.round(s.cw * s.dpr), h: Math.round(s.ch * s.dpr), hz: s.hz });
 }
 
 function startExtend() {
