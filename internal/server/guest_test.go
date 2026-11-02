@@ -35,6 +35,15 @@ func TestViewOnlyForward(t *testing.T) {
 	}
 }
 
+// Commands only the server sends the helper: a viewer can never reach them.
+func TestServerOnlyCmds(t *testing.T) {
+	for _, cmd := range []string{"scale", "br", "stop"} {
+		if allowedCmds[cmd] || viewOnlyCmds[cmd] {
+			t.Errorf("a viewer may send %q", cmd)
+		}
+	}
+}
+
 func TestGuestCantTakeFromOwner(t *testing.T) {
 	kicked := ""
 	_, rel := claimStream("owner-phone", false, false, func(by string) { kicked = by })

@@ -11,6 +11,10 @@
 //             type 3 = event (json):   {"t":"started"|"error"|"cursor"|"displays",...}
 //             type 4 = audio:          [u64 timestamp µs][one 20 ms Opus packet] (only if the viewer asked)
 //   stdin:   one JSON command per line (see `handle(_:)`)
+//             {"t":"scale","f":0.75} captures at that fraction of the size "start" asked for,
+//             without restarting capture. Only tailreach's rate control sends it (a low
+//             bitrate reads better with fewer pixels); viewers can't. "start" carries the
+//             current one as "scale".
 import AppKit
 import ApplicationServices
 import AVFoundation
@@ -94,6 +98,7 @@ final class Encoder {
     private var session: VTCompressionSession?
     private var lastConfig: Data?
     private var boosted = false
+    private var width = 0, height = 0
     var forceKey = true
     var bitrate = 8_000_000
     var fps = 60
@@ -101,6 +106,8 @@ final class Encoder {
 
     func setup(width: Int, height: Int) {
         invalidate()
+        self.width = width
+        self.height = height
         let spec = [kVTVideoEncoderSpecification_EnableLowLatencyRateControl: kCFBooleanTrue] as CFDictionary
         var s: VTCompressionSession?
         let st = VTCompressionSessionCreate(
@@ -151,6 +158,13 @@ final class Encoder {
     }
 
     func encode(_ pb: CVPixelBuffer, pts: CMTime) {
+        // The capture changed size (scale): a new session at the new size, which starts
+        // with a keyframe and sends its new decoder config first.
+        let w = CVPixelBufferGetWidth(pb), h = CVPixelBufferGetHeight(pb)
+        if w != width || h != height {
+            dlog("encoder: frames are now \(w)x\(h), was \(width)x\(height)")
+            setup(width: w, height: h)
+        }
         guard let s = session else { return }
         var props: CFDictionary?
         if forceKey {
@@ -306,6 +320,9 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     private var params: [Int] = []
     private var startedEvent: [String: Any] = [:]
     private var wanted: (Int, Int, Int, Bool, CGDirectDisplayID, Bool, Bool)? // what the viewer asked for, for automatic retries
+    private var streamCfg: SCStreamConfiguration?
+    private var fullW = 0, fullH = 0 // the size the viewer asked for: scale never goes above it
+    private var scale = 1.0
     private var retries = 0
 
     /// macOS's capture service sometimes drops a session (it's busy, or the Mac is hot).
@@ -321,17 +338,19 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         log("capture interrupted (\(why)); retry \(retries) in \(delay)s")
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
             guard viewing else { return }
-            Task { self.stream = nil; self.params = []; await self.start(maxW: w.0, maxH: w.1, fps: w.2, cursor: w.3, display: w.4, hevc: w.5, sound: w.6) }
+            Task { self.stream = nil; self.params = []; await self.start(maxW: w.0, maxH: w.1, fps: w.2, cursor: w.3, display: w.4, hevc: w.5, sound: w.6, scale: self.scale) }
         }
     }
 
     /// display 0 means the main display. One that's gone (unplugged) falls back to it too.
-    func start(maxW: Int, maxH: Int, fps: Int, cursor: Bool, display: CGDirectDisplayID, hevc: Bool, sound: Bool) async {
+    func start(maxW: Int, maxH: Int, fps: Int, cursor: Bool, display: CGDirectDisplayID, hevc: Bool, sound: Bool, scale: Double) async {
         // Same settings and still running (a viewer coming back): just send a fresh keyframe.
         wanted = (maxW, maxH, fps, cursor, display, hevc, sound)
+        self.scale = scale
         let p = [maxW, maxH, fps, cursor ? 1 : 0, Int(display), hevc ? 1 : 0, sound ? 1 : 0]
         if stream != nil, p == params {
             dlog("start: same settings, still capturing: fresh keyframe only")
+            await applyScale()
             resendConfig()
             event(startedEvent)
             return
@@ -354,8 +373,9 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
             let nativeW = Double(filter.contentRect.width) * scale
             let nativeH = Double(filter.contentRect.height) * scale
             let f = min(1.0, Double(maxW) / nativeW, Double(maxH) / nativeH)
-            let w = Int(nativeW * f) & ~1
-            let h = Int(nativeH * f) & ~1
+            fullW = Int(nativeW * f) & ~1
+            fullH = Int(nativeH * f) & ~1
+            let (w, h) = scaled()
 
             let cfg = SCStreamConfiguration()
             cfg.width = w
@@ -386,6 +406,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
             if sound { try s.addStreamOutput(self, type: .audio, sampleHandlerQueue: audioQ) }
             try await s.startCapture()
             stream = s
+            streamCfg = cfg
             params = p
             retries = 0
             shownDisplay = d.displayID // input and cursor reports follow the display being shown
@@ -410,7 +431,39 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         timer?.cancel()
         if let s = stream { try? await s.stopCapture() }
         stream = nil
+        streamCfg = nil
         params = []
+    }
+
+    /// The capture size at the current scale: even, and never under 640 px on the long side.
+    private func scaled() -> (Int, Int) {
+        let f = max(min(1, scale), min(1, 640 / Double(max(fullW, fullH, 1))))
+        return (Int(Double(fullW) * f) & ~1, Int(Double(fullH) * f) & ~1)
+    }
+
+    func setScale(_ f: Double) async {
+        scale = f
+        await applyScale()
+    }
+
+    /// Changes the capture size in place: no new capture session, so no gap and no
+    /// "Screen Recording" flicker. Frames arrive at the new size and the encoder follows
+    /// them (Encoder.encode).
+    private func applyScale() async {
+        guard let s = stream, let cfg = streamCfg else { return }
+        let (w, h) = scaled()
+        guard w != cfg.width || h != cfg.height else { return }
+        let (oldW, oldH) = (cfg.width, cfg.height)
+        dlog("capture scale \(Int(scale * 100))%: \(oldW)x\(oldH) → \(w)x\(h)")
+        cfg.width = w
+        cfg.height = h
+        do {
+            try await s.updateConfiguration(cfg)
+        } catch {
+            log("capture resize failed: \(error.localizedDescription)")
+            cfg.width = oldW // still capturing at the old size
+            cfg.height = oldH
+        }
     }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sb: CMSampleBuffer, of type: SCStreamOutputType) {
@@ -663,6 +716,9 @@ func moveIfGiven(_ c: [String: Any], mods: CGEventFlags) {
     if let x = c["x"] as? NSNumber, let y = c["y"] as? NSNumber { input.moveAbs(x.doubleValue, y.doubleValue, mods: mods) }
 }
 
+/// A capture scale from tailreach: 25–100% of the viewer's size, anything else is full size.
+func scaleFactor(_ f: Double) -> Double { f.isFinite && f >= 0.25 && f <= 1 ? f : 1 }
+
 func handle(_ c: [String: Any]) {
     let mods = Input.flags(c["m"] as? [String] ?? [])
     switch c["t"] as? String {
@@ -688,7 +744,7 @@ func handle(_ c: [String: Any]) {
             }
             await capture.start(maxW: max(320, w), maxH: max(240, h), fps: (10...120).contains(fps) ? fps : 60,
                                 cursor: !localCursor, display: display, hevc: c["codec"] as? String == "hevc",
-                                sound: c["audio"] as? Bool ?? false)
+                                sound: c["audio"] as? Bool ?? false, scale: scaleFactor(num(c["scale"])))
         }
     case "stop":
         inputQ.async { input.releaseAll() }
@@ -712,6 +768,7 @@ func handle(_ c: [String: Any]) {
             event(["t": "diag", "accessibility": AXIsProcessTrusted(), "screen": CGPreflightScreenCaptureAccess()])
         }
     case "br": capture.setBitrate(Int(num(c["bps"])))
+    case "scale": let f = scaleFactor(num(c["f"])); Task { await capture.setScale(f) }
     case "abs": inputQ.async { input.moveAbs(num(c["x"]), num(c["y"]), mods: mods) }
     case "rel": inputQ.async { input.moveRel(num(c["dx"]), num(c["dy"]), mods: mods) }
     case "btn": inputQ.async { moveIfGiven(c, mods: mods); input.button(Int(num(c["b"])), down: c["down"] as? Bool ?? false, clicks: Int(num(c["n"])), mods: mods) }
