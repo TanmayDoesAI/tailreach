@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['site/**', '**.md']
+  pull_request:
+    paths-ignore: ['site/**', '**.md']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-latest
+    env:
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Vet and test
+        run: go vet ./... && go test ./...
+
+      - name: Build
+        run: go build -trimpath -o tailreach ./cmd/tailreach
+
+      - name: Compile the capture helper (Swift)
+        run: swiftc -O -swift-version 5 macos/*.swift -o tailreach-capture
+
+      - name: Check web JavaScript
+        run: |
+          for f in web/viewer/app.js web/viewer/rtcworker.js web/viewer/classic/app.js; do
+            node --check "$f"
+          done

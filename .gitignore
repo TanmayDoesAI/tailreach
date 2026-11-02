@@ -25,3 +25,8 @@ tailscaled.*
 /mydevices-capture
 /docs/demo/
 /.claude/worktrees/
+
+# Website build
+/site/node_modules/
+/site/dist/
+/site/.astro/

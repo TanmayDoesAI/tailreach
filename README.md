@@ -1,5 +1,9 @@
 # tailreach
 
+[![CI](https://github.com/TanmayDoesAI/tailreach/actions/workflows/ci.yml/badge.svg)](https://github.com/TanmayDoesAI/tailreach/actions/workflows/ci.yml)
+
+**[Website](https://tailreach.tanmaylabs.me)** · **[Docs](https://tailreach.tanmaylabs.me/docs/getting-started/)**
+
 **Your Mac's screen in any browser, anywhere, over your own Tailscale network.**
 Control it from your phone on 5G, or turn a spare laptop, tablet or phone into a second monitor for it.
 Nothing to install on the device you're viewing from, no port forwarding, no relay server, no accounts besides your own tailnet.

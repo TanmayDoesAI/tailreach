@@ -1,0 +1,185 @@
+---
+import '../styles/landing.css';
+
+const site = 'https://tailreach.tanmaylabs.me';
+const title = 'tailreach: your Mac, in any browser';
+const description =
+  'Control your Mac from any browser, or use any tablet or laptop as a second monitor, over your own Tailscale network. Free and open source.';
+const repo = 'https://github.com/TanmayDoesAI/tailreach';
+
+const features = [
+  {
+    title: 'A live screen, not a slideshow',
+    body: 'Hardware HEVC or H.264 from the Mac over WebRTC, with rate control built for mobile links: it cuts fast when 5G dips and is back in a couple of seconds.',
+  },
+  {
+    title: 'Touch, trackpad and real shortcuts',
+    body: 'Trackpad or touch mode, pinch to zoom, three-finger swipes for Spaces. Keys arrive as real key presses, so app shortcuts and held keys just work.',
+  },
+  {
+    title: 'Any screen becomes a second monitor',
+    body: 'A tablet, laptop or phone browser turns into an extra display the size of that screen. Drag windows onto it like a plugged-in monitor.',
+  },
+  {
+    title: 'Unlock from the lock screen',
+    body: 'A locked Mac shows up as locked. Type your Mac password on your phone and it goes to the real lock screen; then the fast stream resumes.',
+  },
+  {
+    title: 'Invite a guest, view-only if you like',
+    body: 'Give a friend an expiring invite with a one-time code. They see this Mac only, never your password, and the Mac names them while they’re on.',
+  },
+  {
+    title: 'Files and sound',
+    body: 'Drop files on the screen and they land in the Mac’s Downloads, never replacing anything. Switch on sound to hear the Mac on your device.',
+  },
+];
+
+// Yes / No / '' (not verified, left blank on purpose).
+const cols = ['Free', 'Open source', 'Just a browser on the phone', 'No port forwarding or server to run', 'Second monitor', 'Unlock from the lock screen'];
+const rows = [
+  { name: 'tailreach', cells: ['Yes', 'Yes', 'Yes¹', 'Yes', 'Yes', 'Yes'], us: true },
+  { name: 'macOS Screen Sharing', cells: ['Yes', 'No', 'No', 'No²', 'No', 'Yes'] },
+  { name: 'Chrome Remote Desktop', cells: ['Yes', 'No', 'No', 'Yes', 'No', ''] },
+  { name: 'RustDesk', cells: ['Yes', 'Yes', 'No', 'Yes³', '', ''] },
+  { name: 'Jump Desktop', cells: ['No', 'No', 'No', 'Yes', '', ''] },
+  { name: 'Parsec', cells: ['Yes⁴', 'No', 'No', 'Yes', '', ''] },
+];
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={site + '/'} />
+    <link rel="icon" href="/favicon.png" type="image/png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#0e0e0e" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content={site + '/'} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:image" content={site + '/og.jpg'} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+  </head>
+  <body>
+    <header class="nav wrap">
+      <a class="brand" href="/"><img src="/favicon.png" alt="" width="24" height="24" />tailreach</a>
+      <nav>
+        <a href="/docs/getting-started/">Docs</a>
+        <a href={repo}>GitHub</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero wrap">
+        <h1>Your Mac, in any browser.<br /><span>Over your own Tailscale.</span></h1>
+        <p class="lede">
+          Control your Mac from your phone on 5G, or turn a spare tablet or laptop into a second monitor for it.
+          Nothing to install on the device you view from, no port forwarding, no relay server, no account besides your own tailnet.
+        </p>
+        <div class="cta">
+          <a class="btn primary" href="/docs/getting-started/">Get started</a>
+          <a class="btn" href={repo}>View on GitHub</a>
+        </div>
+        <p class="meta">Free and open source · Apache-2.0 · macOS 14+</p>
+      </section>
+
+      <section class="wrap demo">
+        <video autoplay muted loop playsinline preload="metadata" poster="/demo-poster.jpg" width="1600" height="904"
+          aria-label="tailreach demo: a Mac's screen controlled from a phone's browser">
+          <source src="/demo.webm" type='video/webm; codecs="av01.0.08M.08"' />
+          <source src="/demo.mp4" type="video/mp4" />
+        </video>
+      </section>
+
+      <section class="wrap">
+        <div class="features">
+          {features.map((f) => (
+            <div class="feature">
+              <h3>{f.title}</h3>
+              <p>{f.body}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section class="wrap" id="install">
+        <h2>Install</h2>
+        <p class="sub">tailreach is built on your own Mac. You need the Xcode Command Line Tools and a Tailscale account with MagicDNS and HTTPS certificates on.</p>
+        <div class="install">
+          <div>
+            <h3>Homebrew</h3>
+            <pre><code><span class="p">$</span> brew install tanmaydoesai/tailreach/tailreach
+<span class="p">$</span> tailreach setup</code></pre>
+          </div>
+          <div>
+            <h3>From source <span class="dim">(needs Go)</span></h3>
+            <pre><code><span class="p">$</span> git clone https://github.com/TanmayDoesAI/tailreach.git
+<span class="p">$</span> cd tailreach && make setup</code></pre>
+          </div>
+        </div>
+        <p class="sub">Setup ends with <code>tailreach doctor</code>, which lists what’s left for you (approve the Tailscale sign-in, choose a device password, allow two permissions) with the exact fix for each. Then open the link it prints on your phone. <a href="/docs/getting-started/">Full guide →</a></p>
+      </section>
+
+      <section class="wrap" id="how">
+        <h2>How it works</h2>
+        <div class="how">
+          <ol>
+            <li><strong>One program on the Mac</strong> with Tailscale built in (<code>tsnet</code>). It joins your tailnet as <code>devices</code> and gets a real HTTPS certificate. No Tailscale app needed on the Mac.</li>
+            <li><strong>No server in the middle.</strong> Your phone opens <code>https://devices.&lt;tailnet&gt;.ts.net/mac/</code>. Only your Tailscale identity gets in, then your device password or a passkey.</li>
+            <li><strong>WebRTC over the tailnet.</strong> A small Swift helper captures with ScreenCaptureKit and encodes with VideoToolbox; the video goes as UDP straight to the browser’s hardware decoder.</li>
+          </ol>
+          <pre class="diagram" aria-hidden="true"><code>phone / tablet / laptop browser
+        │  HTTPS, tailnet only
+        ▼
+tailreach on the Mac   (joins as "devices")
+        │
+        ▼
+ScreenCaptureKit → VideoToolbox → WebRTC</code></pre>
+        </div>
+        <p class="sub"><a href="/docs/streaming/">How the stream works →</a> · <a href="/docs/security/">Security →</a></p>
+      </section>
+
+      <section class="wrap" id="compare">
+        <h2>Why not something else?</h2>
+        <p class="sub">They’re good tools. tailreach is for when you want a browser-only viewer on your own private network.</p>
+        <div class="table">
+          <table>
+            <thead>
+              <tr><th></th>{cols.map((c) => <th scope="col">{c}</th>)}</tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr class={r.us ? 'us' : ''}>
+                  <th scope="row">{r.name}</th>
+                  {r.cells.map((c) => (
+                    <td class={c.startsWith('Yes') ? 'yes' : c.startsWith('No') ? 'no' : 'na'}>{c || '·'}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <ol class="notes">
+          <li>Plus the Tailscale app, which puts the phone on your tailnet.</li>
+          <li>Built in and great on a local network; reaching it from outside needs port forwarding or a VPN.</li>
+          <li>Uses RustDesk’s public relay servers by default, or one you host yourself.</li>
+          <li>Free for personal use; paid plans for teams.</li>
+        </ol>
+        <p class="fine">A dot means we haven’t verified it. Corrections are welcome as an <a href={repo + '/issues'}>issue</a>.</p>
+      </section>
+    </main>
+
+    <footer class="wrap">
+      <span>Made by <a href="https://github.com/TanmayDoesAI">Tanmay</a></span>
+      <span><a href={repo}>GitHub</a> · <a href={repo + '/blob/main/LICENSE'}>Apache-2.0</a> · <a href="/docs/getting-started/">Docs</a></span>
+      <span class="fine">Not affiliated with Tailscale Inc.</span>
+    </footer>
+  </body>
+</html>
