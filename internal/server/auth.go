@@ -473,7 +473,9 @@ var auditMu sync.Mutex
 func (a *app) audit(event, who, detail string) {
 	auditMu.Lock()
 	defer auditMu.Unlock()
-	f, err := os.OpenFile(filepath.Join(a.opt.stateDir, "audit.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	path := filepath.Join(a.opt.stateDir, "audit.log")
+	rotateFile(path, 1<<20) // keeps the last 1–2 MB of sign-ins
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return
 	}

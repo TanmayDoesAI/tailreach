@@ -59,6 +59,7 @@ func Serve(args []string) error {
 	fs.BoolVar(&o.noUpdateCheck, "no-update-check", false, "never ask GitHub whether a newer tailreach is out (the only request besides Tailscale's)")
 	fs.Usage = usage
 	fs.Parse(args)
+	go keepLogSmall(filepath.Join(o.stateDir, "tailreach.log"))
 
 	o.name = sanitizeName(o.name)
 	if o.name == "" {
