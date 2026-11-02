@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"net"
@@ -72,14 +73,21 @@ func doctor(args []string) error {
 	}
 
 	d.section("tailreach")
-	st, err := controlCall(*state, map[string]any{"op": "status"})
+	status := func() (map[string]any, error) {
+		st, err := controlCall(*state, map[string]any{"op": "status"})
+		if err == nil && st["starting"] == true { // up, but not signed in to Tailscale yet
+			return nil, errors.New("signing in")
+		}
+		return st, err
+	}
+	st, err := status()
 	for wait := time.Now().Add(20 * time.Second); err != nil && d.running && signInLink(*state) == "" && time.Now().Before(wait); {
 		if !d.said {
 			fmt.Println("  … starting up (joining Tailscale), waiting a few seconds")
 			d.said = true
 		}
 		time.Sleep(time.Second)
-		st, err = controlCall(*state, map[string]any{"op": "status"})
+		st, err = status()
 	}
 	if err != nil {
 		log := filepath.Join(*state, "tailreach.log")
@@ -112,6 +120,9 @@ func doctor(args []string) error {
 		d.ok("HTTPS certificates on")
 	} else {
 		d.fail("HTTPS certificates are off for this tailnet: browsers can't connect", "turn on MagicDNS and HTTPS Certificates at https://login.tailscale.com/admin/dns, then "+restart)
+	}
+	if mac {
+		d.keepAwake(st, me)
 	}
 	switch n, ok := st["ownDevices"].(float64); {
 	case !ok: // an older tailreach that doesn't say
@@ -185,6 +196,31 @@ func doctor(args []string) error {
 		fmt.Printf("  On your phone (Tailscale app connected): %s%s/\n", url, name)
 	}
 	return d.done()
+}
+
+// keepAwake says whether the Mac stays awake (and so reachable), and on what power.
+func (d *checkup) keepAwake(st map[string]any, me string) {
+	on, ok := st["keepAwake"].(bool)
+	if !ok {
+		return // an older tailreach that doesn't say
+	}
+	p, _ := st["power"].(map[string]any)
+	battery := p["source"] == "battery"
+	now := "now on power"
+	if battery {
+		now = fmt.Sprintf("now on battery, %v%%", p["percent"])
+	}
+	fix := "turn on Keep Mac reachable in the tailreach menu-bar icon, or `" + me + " settings`"
+	switch onBattery, _ := st["awakeOnBattery"].(bool); {
+	case !on:
+		d.warn("Keep awake is off: when this Mac sleeps, your phone can't reach it ("+now+")", fix)
+	case onBattery:
+		d.ok("Keeps this Mac awake, on battery too down to %v%% (%s; with the lid closed on battery it sleeps anyway)", st["batteryFloor"], now)
+	case battery:
+		d.ok("Keeps this Mac awake while plugged in (%s, so it may sleep: plug it in, or turn on \"Also on battery\")", now)
+	default:
+		d.ok("Keeps this Mac awake while plugged in (%s)", now)
+	}
 }
 
 // setupFix is the fix for a Homebrew copy (`tailreach setup`), or else the one for a checkout.

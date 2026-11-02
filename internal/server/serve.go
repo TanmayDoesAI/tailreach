@@ -99,6 +99,20 @@ func run(o options) error {
 		return err
 	}
 
+	// Up before signing in to Tailscale: keep-awake, and the control socket and menu bar,
+	// which show that sign-in is pending (and its link) until it's done.
+	sec := newSecurity(filepath.Join(o.stateDir, stateName))
+	sec.applyKeepAwake()
+	if runtime.GOOS == "darwin" {
+		go sec.keepAwakeLoop()
+	}
+	sock := ControlSocketPath(o.stateDir)
+	go serveControl(sock)
+	sec.mu.Lock()
+	showMenuBar := sec.cfg.MenuBar == nil || *sec.cfg.MenuBar
+	sec.mu.Unlock()
+	startMenuBar(sock, showMenuBar)
+
 	ctx := context.Background()
 	go watchLogin(ctx, lc)
 	st, err := srv.Up(ctx)
@@ -135,14 +149,12 @@ func run(o options) error {
 			a.allow[l] = true
 		}
 	}
-	a.sec = newSecurity(filepath.Join(o.stateDir, stateName))
+	a.sec = sec
 	if runtime.GOOS == "darwin" && os.Getppid() != 1 {
 		log.Printf("ℹ Running from a terminal: during sessions macOS will show that terminal app as sharing the screen. For everyday use run `tailreach install` instead.")
 	}
-	a.sec.applyKeepAwake()
 	a.updates = newUpdateChecker(Version)
 	go a.updateLoop(ctx)
-	go a.serveControl()
 	if o.hub || o.via == "" {
 		if a.auth2, err = newAuth(a.selfDNS, filepath.Join(o.stateDir, stateName), a.owner); err != nil {
 			return err
@@ -155,6 +167,7 @@ func run(o options) error {
 	} else {
 		a.web = web.FS
 	}
+	ctlApp.Store(a) // the control socket answers everything from now on
 
 	a.https = len(st.CertDomains) > 0
 	if !a.https {
@@ -208,6 +221,7 @@ func watchLogin(ctx context.Context, lc *local.Client) {
 			}
 			if st.AuthURL != "" && st.AuthURL != shown {
 				shown = st.AuthURL
+				signInURL.Store(&shown)
 				log.Printf("→ Sign in to Tailscale to add this device: %s", st.AuthURL)
 				openBrowser(st.AuthURL)
 			}

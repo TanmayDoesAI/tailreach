@@ -299,7 +299,7 @@ func guestOf(r *http.Request) *invite {
 
 func (a *app) relayVNC(w http.ResponseWriter, r *http.Request) {
 	if streamsBlocked() {
-		http.Error(w, "stopped on the Mac", http.StatusLocked)
+		http.Error(w, blockedReason(), http.StatusLocked)
 		return
 	}
 	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{
